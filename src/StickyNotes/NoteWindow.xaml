@@ -47,6 +47,62 @@
             </Setter>
         </Style>
 
+        <!-- Slim pill scrollbar: translucent dark thumb on a transparent track, so it takes the tone of the note colour -->
+        <Style x:Key="PillThumb" TargetType="Thumb">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Border x:Name="Pill" Background="#30000000" CornerRadius="4" Margin="2,0" />
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Pill" Property="Background" Value="#50000000" />
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Pill" Property="Background" Value="#70000000" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PillRepeatButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Border Background="Transparent" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="PillScrollBar" TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Width" Value="10" />
+            <Setter Property="MinWidth" Value="10" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageUpCommand" Style="{StaticResource PillRepeatButton}" />
+                                </Track.DecreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource PillThumb}" />
+                                </Track.Thumb>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="ScrollBar.PageDownCommand" Style="{StaticResource PillRepeatButton}" />
+                                </Track.IncreaseRepeatButton>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="FormatButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
             <Setter Property="Width" Value="26" />
             <Setter Property="Height" Value="24" />
@@ -55,7 +111,7 @@
         </Style>
     </Window.Resources>
 
-    <Border BorderBrush="#33000000" BorderThickness="1">
+    <Border x:Name="OuterBorder" BorderBrush="#33000000" BorderThickness="1">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="30" />
@@ -65,12 +121,25 @@
 
             <!-- Header: drag to move -->
             <Border x:Name="Header" Grid.Row="0" Background="#F5E77A" Cursor="SizeAll"
-                    MouseLeftButtonDown="Header_MouseLeftButtonDown">
+                    MouseLeftButtonDown="Header_MouseLeftButtonDown"
+                    MouseEnter="Header_MouseEnter">
                 <DockPanel LastChildFill="False" Margin="2,0">
                     <Button DockPanel.Dock="Left" Style="{StaticResource IconButton}" Content="&#xE710;"
                             ToolTip="New note" Click="NewNote_Click" />
+                    <Button x:Name="CollapseButton" DockPanel.Dock="Left" Style="{StaticResource IconButton}"
+                            Content="&#xE70E;" ToolTip="Collapse note" Click="Collapse_Click" />
                     <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE74D;"
                             ToolTip="Delete note" Click="Delete_Click" />
+                    <Button x:Name="ReminderButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
+                            ToolTip="Set reminders" Click="Reminder_Click">
+                        <Grid>
+                            <TextBlock x:Name="ReminderBellOutline" Text="&#xEA8F;" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <!-- Filled bell shown while the note has an active reminder (the icon font has no solid bell) -->
+                            <Path x:Name="ReminderBellFilled" Visibility="Collapsed" Width="15" Height="15" Stretch="Uniform"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#D0000000"
+                                  Data="M8,0.3 C8.4,0.3 8.8,0.6 8.8,1 V1.6 C11,2 12,3.8 12,5.5 V8 C12,9.5 12.5,10.3 13.4,11.2 C13.8,11.6 13.5,12.3 12.9,12.3 H3.1 C2.5,12.3 2.2,11.6 2.6,11.2 C3.5,10.3 4,9.5 4,8 V5.5 C4,3.8 5,2 7.2,1.6 V1 C7.2,0.6 7.6,0.3 8,0.3 Z M6.5,13.5 H9.5 C9.5,14.4 8.8,15 8,15 C7.2,15 6.5,14.4 6.5,13.5 Z" />
+                        </Grid>
+                    </Button>
                     <Button x:Name="ColorButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
                             Content="&#xE790;" ToolTip="Change colour" Click="Color_Click" />
                     <Button x:Name="OnTopButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
@@ -82,13 +151,17 @@
 
             <!-- Note text: wraps lines and scrolls vertically when it overflows -->
             <RichTextBox x:Name="Editor" Grid.Row="1"
+                         FontFamily="Segoe UI, Segoe UI Symbol"
                          Background="Transparent" BorderThickness="0" Foreground="#FF202020"
                          Padding="6,6,4,6"
                          AcceptsReturn="True" AcceptsTab="True"
                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
                          PreviewKeyDown="Editor_PreviewKeyDown"
-                         PreviewTextInput="Editor_PreviewTextInput">
+                         PreviewTextInput="Editor_PreviewTextInput"
+                         PreviewMouseLeftButtonDown="Editor_PreviewMouseLeftButtonDown"
+                         PreviewMouseMove="Editor_PreviewMouseMove">
                 <RichTextBox.Resources>
+                    <Style TargetType="ScrollBar" BasedOn="{StaticResource PillScrollBar}" />
                     <Style TargetType="Paragraph">
                         <Setter Property="Margin" Value="0,0,0,2" />
                     </Style>
@@ -124,6 +197,10 @@
                     <Button Style="{StaticResource FormatButton}" x:Name="NumberingButton" Content="1." FontWeight="SemiBold"
                             ToolTip="Numbered list (Ctrl+Shift+N, or type &quot;1. &quot;)"
                             Command="EditingCommands.ToggleNumbering" CommandTarget="{Binding ElementName=Editor}" />
+                    <Button Style="{StaticResource FormatButton}" FontFamily="{StaticResource IconFont}"
+                            x:Name="ChecklistButton" FontSize="14" Content="&#xE73A;"
+                            ToolTip="Checkbox / checklist (Ctrl+Shift+C, or type &quot;[] &quot;)"
+                            Click="Checklist_Click" />
                 </StackPanel>
             </Border>
         </Grid>

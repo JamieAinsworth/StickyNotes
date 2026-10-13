@@ -14,6 +14,7 @@ public sealed class NoteManager
     private readonly List<NoteData> _pendingRecreate = new();
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _recreateTimer;
+    private readonly DispatcherTimer _reminderTimer;
     private int _recreateAttempts;
     private bool _shuttingDown;
     private bool _reloading;
@@ -32,6 +33,49 @@ public sealed class NoteManager
 
         _recreateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _recreateTimer.Tick += (_, _) => TryRecreatePending();
+
+        _reminderTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _reminderTimer.Tick += (_, _) => CheckReminders();
+        _reminderTimer.Start();
+    }
+
+    private void CheckReminders()
+    {
+        var now = DateTime.Now;
+        bool changed = false;
+
+        foreach (var window in _windows.ToList())
+        {
+            var note = window.Data;
+            if (note.Reminders == null || note.Reminders.Count == 0) continue;
+
+            foreach (var reminder in note.Reminders)
+            {
+                if (reminder.IsRecurring)
+                {
+                    // Daily recurring: trigger if current time >= reminder time-of-day and not already fired today.
+                    bool firedToday = reminder.LastFiredDate.HasValue && reminder.LastFiredDate.Value.Date == now.Date;
+                    if (!firedToday && now.TimeOfDay >= reminder.TargetTime.TimeOfDay)
+                    {
+                        reminder.LastFiredDate = now.Date;
+                        changed = true;
+                        window.TriggerReminderAlert();
+                    }
+                }
+                else
+                {
+                    // Non-recurring: trigger once when target time is reached.
+                    if (!reminder.HasFired && now >= reminder.TargetTime)
+                    {
+                        reminder.HasFired = true;
+                        changed = true;
+                        window.TriggerReminderAlert();
+                    }
+                }
+            }
+        }
+
+        if (changed) RequestSave();
     }
 
     /// <summary>True while all notes are brought in front of other windows.</summary>
@@ -47,7 +91,11 @@ public sealed class NoteManager
     {
         Raised = true;
         _stickyRaise = sticky;
-        foreach (var window in _windows) window.ApplyZOrder();
+        foreach (var window in _windows)
+        {
+            window.ApplyZOrder();
+            window.OnManagerRaised();
+        }
         if (_windows.Count == 0 || sticky) return;
 
         _windows[0].Activate();
@@ -73,7 +121,11 @@ public sealed class NoteManager
     {
         Raised = false;
         _stickyRaise = false;
-        foreach (var window in _windows) window.ApplyZOrder();
+        foreach (var window in _windows)
+        {
+            window.ApplyZOrder();
+            window.OnManagerLowered();
+        }
     }
 
     public void ToggleForward()
@@ -210,6 +262,7 @@ public sealed class NoteManager
         if (_shuttingDown) return;
         _saveTimer.Stop();
         _recreateTimer.Stop();
+        _reminderTimer.Stop();
         SaveNow();
         _shuttingDown = true;
         CloseAllWindows();
