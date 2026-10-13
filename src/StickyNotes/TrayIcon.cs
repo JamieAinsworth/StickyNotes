@@ -27,7 +27,24 @@ public sealed class TrayIcon : IDisposable
         var undoDelete = new ToolStripMenuItem("Undo delete note") { Enabled = false };
         undoDelete.Click += (_, _) => manager.UndoDelete();
         _menu.Items.Add(undoDelete);
-        _menu.Opening += (_, _) => undoDelete.Enabled = manager.CanUndoDelete;
+
+        var recentlyDeleted = new ToolStripMenuItem("Recently deleted") { Enabled = false };
+        _menu.Items.Add(recentlyDeleted);
+        _menu.Opening += (_, _) =>
+        {
+            undoDelete.Enabled = manager.CanUndoDelete;
+
+            recentlyDeleted.DropDownItems.Clear();
+            var deleted = manager.RecentlyDeleted();
+            recentlyDeleted.Enabled = deleted.Count > 0;
+            foreach (var note in deleted)
+            {
+                // '&' would otherwise be read as a menu access key.
+                var item = new ToolStripMenuItem($"{note.Title.Replace("&", "&&")}  ·  {note.AgeText}");
+                item.Click += (_, _) => manager.UndoDelete(note.Data);
+                recentlyDeleted.DropDownItems.Add(item);
+            }
+        };
         _menu.Items.Add("Show desktop", null, (_, _) => ShowDesktop());
         _menu.Items.Add(new ToolStripSeparator());
 

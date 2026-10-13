@@ -210,9 +210,19 @@ public sealed class NoteManager
     public NoteWindow? UndoDelete()
     {
         if (_deletedNotes.Count == 0) return null;
+        return UndoDelete(_deletedNotes[^1].Data);
+    }
 
-        var data = _deletedNotes[^1].Data;
-        _deletedNotes.RemoveAt(_deletedNotes.Count - 1);
+    /// <summary>Deleted notes that can still be restored, newest first.</summary>
+    public IReadOnlyList<DeletedNote> RecentlyDeleted() =>
+        _deletedNotes.AsEnumerable().Reverse().Select(d => new DeletedNote(d.Data, d.DeletedAt)).ToList();
+
+    /// <summary>Brings back a specific deleted note, where it was, with its content and reminders.</summary>
+    public NoteWindow? UndoDelete(NoteData data)
+    {
+        int index = _deletedNotes.FindIndex(d => ReferenceEquals(d.Data, data));
+        if (index < 0) return null;
+        _deletedNotes.RemoveAt(index);
 
         EnsureOnScreen(data);
         var window = ShowNote(data);
