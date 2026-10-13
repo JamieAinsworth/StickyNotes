@@ -54,6 +54,7 @@ public partial class NoteWindow : Window
         _hoverTimer.Tick += (_, _) => CollapseIfCursorLeft();
 
         LoadContent();
+        ChecklistEditor.RefreshGlyphs(Editor.Document);
         ApplyColor(NoteColors.Get(data.Color));
         ApplyPinned(data.Pinned);
         ApplyAlwaysOnTop(data.AlwaysOnTop);

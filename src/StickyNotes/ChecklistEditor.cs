@@ -19,6 +19,7 @@ internal static class ChecklistEditor
     private const char DoneBox = '\u2611';
     private const string Prefix = "\u2610 ";
 
+    private static readonly FontFamily GlyphFont = new("Segoe UI Symbol");
     private static readonly Brush DoneBrush = CreateDoneBrush();
 
     private static Brush CreateDoneBrush()
@@ -79,7 +80,7 @@ internal static class ChecklistEditor
 
         bool hadSelection = !editor.Selection.IsEmpty;
         var caretParagraph = editor.CaretPosition.Paragraph;
-        int caretOffset = caretParagraph == null ? 0 : PrefixStart(caretParagraph).GetOffsetToPosition(editor.CaretPosition);
+        int caretOffset = caretParagraph == null ? 0 : CharsBetween(PrefixStart(caretParagraph), editor.CaretPosition);
         bool removing = paragraphs.All(HasCheckbox);
         int shift = 0;
 
@@ -104,7 +105,7 @@ internal static class ChecklistEditor
             }
             else if (caretParagraph != null)
             {
-                var position = PrefixStart(caretParagraph).GetPositionAtOffset(Math.Max(0, caretOffset + shift), LogicalDirection.Forward);
+                var position = Advance(PrefixStart(caretParagraph), Math.Max(0, caretOffset + shift));
                 editor.CaretPosition = position ?? caretParagraph.ContentEnd;
             }
         }
@@ -121,17 +122,72 @@ internal static class ChecklistEditor
         bool done = !IsDone(paragraph);
 
         var start = PrefixStart(paragraph);
-        var glyphEnd = start.GetPositionAtOffset(1, LogicalDirection.Forward);
+        var glyphEnd = Advance(start, 1);
         if (glyphEnd == null) return;
         new TextRange(start, glyphEnd).Text = done ? DoneBox.ToString() : EmptyBox.ToString();
-
+        StyleGlyph(paragraph);
 
         StyleContent(paragraph, done, editor.Foreground);
     }
 
+    /// <summary>Re-applies the box font to every checkbox in a document (notes saved before the font was pinned).</summary>
+    public static void RefreshGlyphs(FlowDocument document) => RefreshGlyphs(document.Blocks);
+
+    private static void RefreshGlyphs(BlockCollection blocks)
+    {
+        foreach (var block in blocks.ToList())
+        {
+            switch (block)
+            {
+                case Paragraph paragraph when HasCheckbox(paragraph):
+                    StyleGlyph(paragraph);
+                    break;
+                case List list:
+                    foreach (var item in list.ListItems.ToList()) RefreshGlyphs(item.Blocks);
+                    break;
+                case Section section:
+                    RefreshGlyphs(section.Blocks);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>Walks forward by whole characters; unlike GetPositionAtOffset it ignores run boundaries.</summary>
+    private static TextPointer? Advance(TextPointer from, int characters)
+    {
+        var pointer = from;
+        for (int i = 0; i < characters && pointer != null; i++)
+            pointer = pointer.GetNextInsertionPosition(LogicalDirection.Forward);
+        return pointer;
+    }
+
+    /// <summary>How many characters lie between two positions in the same paragraph.</summary>
+    private static int CharsBetween(TextPointer from, TextPointer to)
+    {
+        int count = 0;
+        var pointer = from;
+        while (pointer != null && pointer.CompareTo(to) < 0)
+        {
+            pointer = pointer.GetNextInsertionPosition(LogicalDirection.Forward);
+            if (pointer != null && pointer.CompareTo(to) <= 0) count++;
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// Draws the box in a symbol font so ticked and unticked boxes match; the fallback font draws the ticked
+    /// one as a larger solid emoji square.
+    /// </summary>
+    private static void StyleGlyph(Paragraph paragraph)
+    {
+        var start = PrefixStart(paragraph);
+        var end = Advance(start, 1);
+        if (end != null) new TextRange(start, end).ApplyPropertyValue(TextElement.FontFamilyProperty, GlyphFont);
+    }
+
     private static void StyleContent(Paragraph paragraph, bool done, Brush normalBrush)
     {
-        var contentStart = PrefixStart(paragraph).GetPositionAtOffset(2, LogicalDirection.Forward);
+        var contentStart = Advance(PrefixStart(paragraph), 2);
         if (contentStart == null || contentStart.CompareTo(paragraph.ContentEnd) >= 0) return;
 
         var content = new TextRange(contentStart, paragraph.ContentEnd);
@@ -156,6 +212,7 @@ internal static class ChecklistEditor
     {
         var start = PrefixStart(paragraph);
         new TextRange(start, start).Text = Prefix;
+        StyleGlyph(paragraph);
     }
 
     private static void RemoveCheckbox(Paragraph paragraph, Brush normalBrush)
@@ -165,7 +222,7 @@ internal static class ChecklistEditor
 
         var start = PrefixStart(paragraph);
         var length = TextOf(paragraph).Length >= 2 ? 2 : 1;
-        var end = start.GetPositionAtOffset(length, LogicalDirection.Forward) ?? paragraph.ContentEnd;
+        var end = Advance(start, length) ?? paragraph.ContentEnd;
         new TextRange(start, end).Text = string.Empty;
 
         if (paragraph.Parent is ListItem { List: { } list } && IsChecklistList(list)) ExitList(paragraph);
@@ -289,7 +346,7 @@ internal static class ChecklistEditor
         var paragraph = editor.CaretPosition.Paragraph;
         if (paragraph == null || !HasCheckbox(paragraph)) return false;
 
-        int offset = PrefixStart(paragraph).GetOffsetToPosition(editor.CaretPosition);
+        int offset = CharsBetween(PrefixStart(paragraph), editor.CaretPosition);
         int prefixLength = TextOf(paragraph).Length >= 2 ? 2 : 1;
         if (offset != prefixLength) return false;
 
@@ -316,7 +373,7 @@ internal static class ChecklistEditor
         try
         {
             AddCheckbox(paragraph);
-            editor.CaretPosition = PrefixStart(paragraph).GetPositionAtOffset(2, LogicalDirection.Forward) ?? paragraph.ContentEnd;
+            editor.CaretPosition = Advance(PrefixStart(paragraph), 2) ?? paragraph.ContentEnd;
         }
         finally
         {
@@ -331,7 +388,7 @@ internal static class ChecklistEditor
         if (paragraph == null || !HasCheckbox(paragraph)) return null;
 
         var start = PrefixStart(paragraph);
-        var end = start.GetPositionAtOffset(1, LogicalDirection.Forward);
+        var end = Advance(start, 1);
         if (end == null) return null;
 
         var first = start.GetCharacterRect(LogicalDirection.Forward);
