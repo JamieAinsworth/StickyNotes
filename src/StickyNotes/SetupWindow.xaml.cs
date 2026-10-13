@@ -119,6 +119,12 @@ public partial class SetupWindow : Window
     {
         ErrorText.Visibility = Visibility.Collapsed;
 
+        if (HotkeyManager.AreSame(HotkeyBox.Text, NewNoteHotkeyBox.Text))
+        {
+            ShowError("The show/hide shortcut and the new note shortcut can't be the same. Choose a different combination for one of them.");
+            return;
+        }
+
         string folder = ExpandPath(FolderBox.Text);
         if (folder.Length == 0) folder = AppSettings.DefaultDataFolder;
         if (!Path.IsPathFullyQualified(folder))

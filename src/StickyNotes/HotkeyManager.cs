@@ -76,6 +76,18 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
         if (Handle != IntPtr.Zero) DestroyHandle();
     }
 
+    /// <summary>True when both texts describe the same key combination (blank texts never conflict).</summary>
+    public static bool AreSame(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second)) return false;
+
+        if (TryParse(first, out uint firstModifiers, out uint firstKey) &&
+            TryParse(second, out uint secondModifiers, out uint secondKey))
+            return firstModifiers == secondModifiers && firstKey == secondKey;
+
+        return string.Equals(first.Trim(), second.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string Format(ModifierKeys modifiers, Key key)
     {
         var text = string.Empty;
@@ -105,7 +117,7 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
             }
         }
 
-        if (!Enum.TryParse(parts[^1], out Key key) || key == Key.None) return false;
+        if (!Enum.TryParse(parts[^1], ignoreCase: true, out Key key) || key == Key.None || !Enum.IsDefined(key)) return false;
         vk = (uint)KeyInterop.VirtualKeyFromKey(key);
         return vk != 0;
     }

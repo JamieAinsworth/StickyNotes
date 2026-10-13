@@ -51,27 +51,11 @@ public sealed class NoteManager
 
             foreach (var reminder in note.Reminders)
             {
-                if (reminder.IsRecurring)
-                {
-                    // Daily recurring: trigger if current time >= reminder time-of-day and not already fired today.
-                    bool firedToday = reminder.LastFiredDate.HasValue && reminder.LastFiredDate.Value.Date == now.Date;
-                    if (!firedToday && now.TimeOfDay >= reminder.TargetTime.TimeOfDay)
-                    {
-                        reminder.LastFiredDate = now.Date;
-                        changed = true;
-                        window.TriggerReminderAlert();
-                    }
-                }
-                else
-                {
-                    // Non-recurring: trigger once when target time is reached.
-                    if (!reminder.HasFired && now >= reminder.TargetTime)
-                    {
-                        reminder.HasFired = true;
-                        changed = true;
-                        window.TriggerReminderAlert();
-                    }
-                }
+                if (!reminder.IsDue(now)) continue;
+
+                reminder.MarkFired(now);
+                changed = true;
+                window.TriggerReminderAlert();
             }
         }
 
@@ -236,12 +220,12 @@ public sealed class NoteManager
     /// Whether Ctrl+Z in a note should restore a deleted note rather than undo typing: only for a recent deletion,
     /// and only once the note has nothing of its own left to undo (or hasn't been edited since the deletion).
     /// </summary>
-    public bool ShouldUndoDeleteOnCtrlZ(bool editorCanUndo, DateTime lastEditedAt)
+    public bool ShouldUndoDeleteOnCtrlZ(bool editorCanUndo, DateTime lastEditedAt, DateTime? now = null)
     {
         if (_deletedNotes.Count == 0) return false;
 
         var (_, deletedAt) = _deletedNotes[^1];
-        if (DateTime.Now - deletedAt > UndoShortcutWindow) return false;
+        if ((now ?? DateTime.Now) - deletedAt > UndoShortcutWindow) return false;
         return !editorCanUndo || lastEditedAt < deletedAt;
     }
 
@@ -301,6 +285,9 @@ public sealed class NoteManager
         _saveTimer.Stop();
         _recreateTimer.Stop();
         _pendingRecreate.Clear();
+
+        // The deleted notes belong to the notes being closed; restoring one into the new set would mix them up.
+        _deletedNotes.Clear();
         _reloading = true;
         try
         {

@@ -183,12 +183,7 @@ public partial class RemindersWindow : Window
             return;
         }
 
-        var reminder = new NoteReminder
-        {
-            TargetTime = targetTime,
-            IsRecurring = isRecurring,
-            HasFired = false,
-        };
+        var reminder = NoteReminder.Create(targetTime, isRecurring, DateTime.Now);
 
         _note.Reminders.Add(reminder);
         _onChanged();

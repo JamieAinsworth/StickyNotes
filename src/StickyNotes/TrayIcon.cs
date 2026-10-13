@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -90,6 +91,15 @@ public sealed class TrayIcon : IDisposable
         };
     }
 
+    /// <summary>Shows a short, non-blocking message from the tray icon.</summary>
+    public void ShowNotice(string title, string text)
+    {
+        _notifyIcon.BalloonTipTitle = title;
+        _notifyIcon.BalloonTipText = text;
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Warning;
+        _notifyIcon.ShowBalloonTip(8000);
+    }
+
     private static async Task CheckForUpdatesAsync(ToolStripMenuItem item)
     {
         item.Enabled = false;
@@ -116,9 +126,14 @@ public sealed class TrayIcon : IDisposable
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            MessageBox.Show("Couldn't reach GitHub to check for updates. Check your internet connection and try again.",
+                "Sticky Notes", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
         catch (Exception ex)
         {
-            MessageBox.Show("Couldn't check for updates. Check your internet connection and try again.\n\n" + ex.Message,
+            MessageBox.Show("Couldn't check for updates.\n\n" + ex.Message,
                 "Sticky Notes", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally

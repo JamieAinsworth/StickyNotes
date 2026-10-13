@@ -121,13 +121,22 @@ internal static class ChecklistEditor
         if (!HasCheckbox(paragraph)) return;
         bool done = !IsDone(paragraph);
 
-        var start = PrefixStart(paragraph);
-        var glyphEnd = Advance(start, 1);
-        if (glyphEnd == null) return;
-        new TextRange(start, glyphEnd).Text = done ? DoneBox.ToString() : EmptyBox.ToString();
-        StyleGlyph(paragraph);
+        // One click is several edits (glyph, font, strikethrough, colour); group them into a single undo step.
+        editor.BeginChange();
+        try
+        {
+            var start = PrefixStart(paragraph);
+            var glyphEnd = Advance(start, 1);
+            if (glyphEnd == null) return;
+            new TextRange(start, glyphEnd).Text = done ? DoneBox.ToString() : EmptyBox.ToString();
+            StyleGlyph(paragraph);
 
-        StyleContent(paragraph, done, editor.Foreground);
+            StyleContent(paragraph, done, editor.Foreground);
+        }
+        finally
+        {
+            editor.EndChange();
+        }
     }
 
     /// <summary>Re-applies the box font to every checkbox in a document (notes saved before the font was pinned).</summary>
@@ -191,50 +200,8 @@ internal static class ChecklistEditor
         if (contentStart == null || contentStart.CompareTo(paragraph.ContentEnd) >= 0) return;
 
         var content = new TextRange(contentStart, paragraph.ContentEnd);
-        SetStrikethrough(content, done);
+        TextFormatting.SetStrikethrough(content, done);
         content.ApplyPropertyValue(TextElement.ForegroundProperty, done ? DoneBrush : normalBrush);
-    }
-
-    /// <summary>
-    /// Adds or removes strikethrough run by run. Decorations can differ from word to word (one word underlined,
-    /// say), so each run keeps its own other decorations instead of being overwritten with one shared set.
-    /// </summary>
-    private static void SetStrikethrough(TextRange range, bool strike)
-    {
-        var segments = new List<TextRange>();
-        var pointer = range.Start;
-        while (pointer != null && pointer.CompareTo(range.End) < 0)
-        {
-            var next = pointer.GetNextContextPosition(LogicalDirection.Forward);
-            if (next == null) break;
-            if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-            {
-                var end = next.CompareTo(range.End) > 0 ? range.End : next;
-                segments.Add(new TextRange(pointer, end));
-            }
-            pointer = next;
-        }
-
-        foreach (var segment in segments)
-        {
-            var current = segment.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
-            segment.ApplyPropertyValue(Inline.TextDecorationsProperty, WithStrikethrough(current, strike));
-        }
-    }
-
-    private static TextDecorationCollection WithStrikethrough(TextDecorationCollection? current, bool strike)
-    {
-        var updated = new TextDecorationCollection();
-        if (current != null)
-        {
-            foreach (var decoration in current.Where(d => d.Location != TextDecorationLocation.Strikethrough))
-                updated.Add(decoration.Clone());
-        }
-        if (strike)
-        {
-            foreach (var decoration in TextDecorations.Strikethrough) updated.Add(decoration.Clone());
-        }
-        return updated;
     }
 
     private static void AddCheckbox(Paragraph paragraph)
@@ -407,13 +374,13 @@ internal static class ChecklistEditor
             // The new item inherits the look of the one it was split from; if that was ticked, drop the
             // strikethrough and grey from the moved text, the box, and whatever gets typed next.
             var whole = new TextRange(paragraph.ContentStart, paragraph.ContentEnd);
-            SetStrikethrough(whole, strike: false);
+            TextFormatting.SetStrikethrough(whole, strike: false);
             whole.ApplyPropertyValue(TextElement.ForegroundProperty, editor.Foreground);
 
             editor.CaretPosition = Advance(PrefixStart(paragraph), 2) ?? paragraph.ContentEnd;
             var typing = editor.Selection;
             typing.ApplyPropertyValue(Inline.TextDecorationsProperty,
-                WithStrikethrough(typing.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection, false));
+                TextFormatting.WithStrikethrough(typing.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection, false));
             typing.ApplyPropertyValue(TextElement.ForegroundProperty, editor.Foreground);
         }
         finally

@@ -18,7 +18,7 @@ public sealed class AppSettings
 
     public static string SettingsPath { get; } = Path.Combine(DefaultDataFolder, "settings.json");
 
-    public static AppSettings Current { get; private set; } = new();
+    public static AppSettings Current { get; internal set; } = new();
 
     public string DefaultColor { get; set; } = NoteColors.Default.Name;
 

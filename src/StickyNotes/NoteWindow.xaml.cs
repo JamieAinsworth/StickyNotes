@@ -484,6 +484,7 @@ public partial class NoteWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _hoverTimer.Stop();
         StopAlertGlow();
         base.OnClosed(e);
     }
@@ -687,22 +688,28 @@ public partial class NoteWindow : Window
     private void ToggleStrikethrough()
     {
         var selection = Editor.Selection;
-        var current = selection.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
-        bool hasStrike = HasDecoration(current, TextDecorationLocation.Strikethrough);
 
-        var updated = new TextDecorationCollection();
-        if (current != null)
+        if (selection.IsEmpty)
         {
-            foreach (var decoration in current.Where(d => d.Location != TextDecorationLocation.Strikethrough))
-                updated.Add(decoration.Clone());
+            // Nothing selected: switch strikethrough on or off for the text typed next.
+            var current = selection.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
+            bool hasStrike = HasDecoration(current, TextDecorationLocation.Strikethrough);
+            selection.ApplyPropertyValue(Inline.TextDecorationsProperty, TextFormatting.WithStrikethrough(current, !hasStrike));
         }
-        if (!hasStrike)
+        else
         {
-            foreach (var decoration in TextDecorations.Strikethrough)
-                updated.Add(decoration.Clone());
+            // Adjust each run separately so unrelated decorations (e.g. an underlined word) are kept.
+            Editor.BeginChange();
+            try
+            {
+                TextFormatting.SetStrikethrough(selection, !TextFormatting.IsFullyStruck(selection));
+            }
+            finally
+            {
+                Editor.EndChange();
+            }
         }
 
-        selection.ApplyPropertyValue(Inline.TextDecorationsProperty, updated);
         Editor.Focus();
         UpdateFormatButtons();
     }

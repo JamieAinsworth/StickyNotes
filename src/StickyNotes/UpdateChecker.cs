@@ -45,8 +45,16 @@ public static class UpdateChecker
 
         var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
         var url = root.TryGetProperty("html_url", out var urlElement) ? urlElement.GetString() : null;
-        return new UpdateInfo(CurrentVersion, ParseTag(tag), url ?? ReleasesUrl);
+        return new UpdateInfo(CurrentVersion, ParseTag(tag), SafeReleaseUrl(url));
     }
+
+    /// <summary>The release page to open: only an https github.com address is trusted, anything else falls back.</summary>
+    public static string SafeReleaseUrl(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps &&
+        uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)
+            ? uri.AbsoluteUri
+            : ReleasesUrl;
 
     /// <summary>Reads "v1.2.3" (optionally with a "-beta" or "+build" suffix) as a version.</summary>
     public static Version? ParseTag(string? tag)

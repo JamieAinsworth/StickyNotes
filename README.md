@@ -72,6 +72,14 @@ Launching the app again while it's running just opens a new note. **Start with W
 
 The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`). Some antivirus tools block locally built, unsigned exes; if that happens, use the GitHub workflow below instead.
 
+### Run the tests
+
+```powershell
+dotnet test tests\StickyNotes.Tests
+```
+
+The tests cover the checklist editing, reminders, undo for deleted notes, shortcuts and the update check. Some open real (off-screen) note windows, so they need a normal Windows desktop session; they use a temporary data folder and never touch your real notes. The [CI workflow](.github/workflows/ci.yml) builds and runs them on every pull request and on pushes to `main`.
+
 ### Publish a GitHub release
 
 Push a version tag, and the [Release workflow](.github/workflows/release.yml) builds the installer and portable exe and attaches them to a new GitHub release:

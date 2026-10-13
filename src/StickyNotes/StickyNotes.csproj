@@ -21,4 +21,8 @@
     <UseAppHost Condition="'$(UseAppHost)' == ''">false</UseAppHost>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="StickyNotes.Tests" />
+  </ItemGroup>
+
 </Project>
