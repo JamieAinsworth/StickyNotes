@@ -1,7 +1,7 @@
 ﻿# Sticky Notes
 Sticky notes that dont annoy me
 
-A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
+A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
 
 ## Features
 
