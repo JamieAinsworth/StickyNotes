@@ -436,6 +436,9 @@ public partial class NoteWindow : Window
         _isAlertFlashing = true;
         _alertKeepOnTop = false;
 
+        // A one-off reminder has just fired, so the bell may no longer have anything active.
+        UpdateReminderButton();
+
         // Bring this specific note to the front, then place the glow just behind it
         ApplyZOrder();
         StartAlertGlow();

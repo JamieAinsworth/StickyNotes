@@ -180,6 +180,10 @@ public partial class App : Application
             if (_settingsWindow.Saved)
             {
                 _tray?.RefreshColour();
+
+                // Release both first: a swapped pair would otherwise clash with the other shortcut's old registration.
+                _hotkey?.Unregister(HotkeyManager.ToggleNotesId);
+                _hotkey?.Unregister(HotkeyManager.NewNoteId);
                 bool toggleOk = _hotkey?.Register(HotkeyManager.ToggleNotesId, AppSettings.Current.ToggleHotkey, () => _manager?.ToggleForward()) ?? true;
                 bool newNoteOk = _hotkey?.Register(HotkeyManager.NewNoteId, AppSettings.Current.NewNoteHotkey, () => _manager?.CreateNote()) ?? true;
                 if (!toggleOk || !newNoteOk)

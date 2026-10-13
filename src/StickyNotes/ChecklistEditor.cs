@@ -191,21 +191,50 @@ internal static class ChecklistEditor
         if (contentStart == null || contentStart.CompareTo(paragraph.ContentEnd) >= 0) return;
 
         var content = new TextRange(contentStart, paragraph.ContentEnd);
-        var current = content.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
+        SetStrikethrough(content, done);
+        content.ApplyPropertyValue(TextElement.ForegroundProperty, done ? DoneBrush : normalBrush);
+    }
 
+    /// <summary>
+    /// Adds or removes strikethrough run by run. Decorations can differ from word to word (one word underlined,
+    /// say), so each run keeps its own other decorations instead of being overwritten with one shared set.
+    /// </summary>
+    private static void SetStrikethrough(TextRange range, bool strike)
+    {
+        var segments = new List<TextRange>();
+        var pointer = range.Start;
+        while (pointer != null && pointer.CompareTo(range.End) < 0)
+        {
+            var next = pointer.GetNextContextPosition(LogicalDirection.Forward);
+            if (next == null) break;
+            if (pointer.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+            {
+                var end = next.CompareTo(range.End) > 0 ? range.End : next;
+                segments.Add(new TextRange(pointer, end));
+            }
+            pointer = next;
+        }
+
+        foreach (var segment in segments)
+        {
+            var current = segment.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection;
+            segment.ApplyPropertyValue(Inline.TextDecorationsProperty, WithStrikethrough(current, strike));
+        }
+    }
+
+    private static TextDecorationCollection WithStrikethrough(TextDecorationCollection? current, bool strike)
+    {
         var updated = new TextDecorationCollection();
         if (current != null)
         {
             foreach (var decoration in current.Where(d => d.Location != TextDecorationLocation.Strikethrough))
                 updated.Add(decoration.Clone());
         }
-        if (done)
+        if (strike)
         {
             foreach (var decoration in TextDecorations.Strikethrough) updated.Add(decoration.Clone());
         }
-
-        content.ApplyPropertyValue(Inline.TextDecorationsProperty, updated);
-        content.ApplyPropertyValue(TextElement.ForegroundProperty, done ? DoneBrush : normalBrush);
+        return updated;
     }
 
     private static void AddCheckbox(Paragraph paragraph)
@@ -316,8 +345,9 @@ internal static class ChecklistEditor
         editor.Selection.Start.GetInsertionPosition(LogicalDirection.Forward).Paragraph is { } p && HasCheckbox(p);
 
     /// <summary>
-    /// Enter on an item that holds only a checkbox removes the checkbox (and leaves a checklist), like Enter
-    /// on an empty bullet leaves a list.
+    /// Enter on an item that holds only a checkbox removes the checkbox. A checklist line then leaves its list; a
+    /// bullet or numbered item stays a list item, so false is returned and the caller's normal "Enter on an empty
+    /// list item" handling ends the list in the same keypress.
     /// </summary>
     public static bool TryExitEmptyItem(RichTextBox editor)
     {
@@ -336,7 +366,7 @@ internal static class ChecklistEditor
         {
             editor.EndChange();
         }
-        return true;
+        return paragraph.Parent is not ListItem;
     }
 
     /// <summary>Backspace straight after the checkbox removes the checkbox instead of just its space.</summary>
@@ -363,7 +393,7 @@ internal static class ChecklistEditor
         return true;
     }
 
-    /// <summary>After Enter has split a checkbox item, gives the new item its own empty checkbox.</summary>
+    /// <summary>After Enter has split a checkbox item, gives the new item its own empty, plainly formatted checkbox.</summary>
     public static void PrepareNewItem(RichTextBox editor)
     {
         var paragraph = editor.CaretPosition.Paragraph;
@@ -373,7 +403,18 @@ internal static class ChecklistEditor
         try
         {
             AddCheckbox(paragraph);
+
+            // The new item inherits the look of the one it was split from; if that was ticked, drop the
+            // strikethrough and grey from the moved text, the box, and whatever gets typed next.
+            var whole = new TextRange(paragraph.ContentStart, paragraph.ContentEnd);
+            SetStrikethrough(whole, strike: false);
+            whole.ApplyPropertyValue(TextElement.ForegroundProperty, editor.Foreground);
+
             editor.CaretPosition = Advance(PrefixStart(paragraph), 2) ?? paragraph.ContentEnd;
+            var typing = editor.Selection;
+            typing.ApplyPropertyValue(Inline.TextDecorationsProperty,
+                WithStrikethrough(typing.GetPropertyValue(Inline.TextDecorationsProperty) as TextDecorationCollection, false));
+            typing.ApplyPropertyValue(TextElement.ForegroundProperty, editor.Foreground);
         }
         finally
         {
