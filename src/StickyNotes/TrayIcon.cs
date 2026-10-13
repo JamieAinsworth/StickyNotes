@@ -23,6 +23,11 @@ public sealed class TrayIcon : IDisposable
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("New note", null, (_, _) => manager.CreateNote());
+
+        var undoDelete = new ToolStripMenuItem("Undo delete note") { Enabled = false };
+        undoDelete.Click += (_, _) => manager.UndoDelete();
+        _menu.Items.Add(undoDelete);
+        _menu.Opening += (_, _) => undoDelete.Enabled = manager.CanUndoDelete;
         _menu.Items.Add("Show desktop", null, (_, _) => ShowDesktop());
         _menu.Items.Add(new ToolStripSeparator());
 

@@ -183,10 +183,56 @@ public sealed class NoteManager
         return window;
     }
 
+    private const int MaxUndoableDeletes = 10;
+    private static readonly TimeSpan UndoShortcutWindow = TimeSpan.FromMinutes(10);
+
+    private readonly List<(NoteData Data, DateTime DeletedAt)> _deletedNotes = new();
+
+    /// <summary>True when a deleted note can be brought back.</summary>
+    public bool CanUndoDelete => _deletedNotes.Count > 0;
+
     public void DeleteNote(NoteWindow window)
     {
+        var data = window.CaptureData();
+        _deletedNotes.Add((data, DateTime.Now));
+        if (_deletedNotes.Count > MaxUndoableDeletes) _deletedNotes.RemoveAt(0);
+
+        bool wasActive = window.IsActive;
         window.IsDeleted = true;
         window.Close();
+
+        // The deleted note held the keyboard focus; hand it to another note so Ctrl+Z works straight away.
+        if (wasActive)
+            (_windows.FirstOrDefault(w => !w.IsEffectivelyCollapsed) ?? _windows.FirstOrDefault())?.Activate();
+    }
+
+    /// <summary>Brings back the most recently deleted note, where it was, with its content and reminders.</summary>
+    public NoteWindow? UndoDelete()
+    {
+        if (_deletedNotes.Count == 0) return null;
+
+        var data = _deletedNotes[^1].Data;
+        _deletedNotes.RemoveAt(_deletedNotes.Count - 1);
+
+        EnsureOnScreen(data);
+        var window = ShowNote(data);
+        window.Activate();
+        window.FocusEditor();
+        RequestSave();
+        return window;
+    }
+
+    /// <summary>
+    /// Whether Ctrl+Z in a note should restore a deleted note rather than undo typing: only for a recent deletion,
+    /// and only once the note has nothing of its own left to undo (or hasn't been edited since the deletion).
+    /// </summary>
+    public bool ShouldUndoDeleteOnCtrlZ(bool editorCanUndo, DateTime lastEditedAt)
+    {
+        if (_deletedNotes.Count == 0) return false;
+
+        var (_, deletedAt) = _deletedNotes[^1];
+        if (DateTime.Now - deletedAt > UndoShortcutWindow) return false;
+        return !editorCanUndo || lastEditedAt < deletedAt;
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)

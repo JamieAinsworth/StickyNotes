@@ -30,6 +30,7 @@ public partial class NoteWindow : Window
     private bool _isManagerExpanded;
     private bool _isAlertFlashing;
     private bool _alertKeepOnTop;
+    private DateTime _lastEditedAt = DateTime.MinValue;
     private AlertGlowWindow? _alertGlow;
     private readonly DispatcherTimer _hoverTimer;
 
@@ -103,6 +104,16 @@ public partial class NoteWindow : Window
         };
 
         PreviewMouseDown += (_, _) => DismissReminderAlert();
+        PreviewKeyDown += (_, e) =>
+        {
+            // Window-level so it also works from a collapsed note, where the editor can't take focus.
+            if (e.Key == Key.Z && Keyboard.Modifiers == ModifierKeys.Control &&
+                _manager.ShouldUndoDeleteOnCtrlZ(Editor.CanUndo, _lastEditedAt))
+            {
+                _manager.UndoDelete();
+                e.Handled = true;
+            }
+        };
         MouseLeave += NoteWindow_MouseLeave;
     }
 
@@ -220,8 +231,9 @@ public partial class NoteWindow : Window
     {
         if (!IsEmpty)
         {
-            var result = MessageBox.Show(this, "Delete this note?", "Sticky Notes",
-                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            var result = MessageBox.Show(this,
+                "Delete this note?\n\nYou can bring it back with Ctrl+Z or Undo delete note in the tray menu.",
+                "Sticky Notes", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
             if (result != MessageBoxResult.Yes) return;
         }
         _manager.DeleteNote(this);
@@ -477,6 +489,7 @@ public partial class NoteWindow : Window
 
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
+        _lastEditedAt = DateTime.Now;
         _manager.RequestSave();
         QueueFormatButtonsUpdate();
 
