@@ -168,7 +168,6 @@ public sealed class NoteManager
     }
 
     private const int MaxUndoableDeletes = 10;
-    private static readonly TimeSpan UndoShortcutWindow = TimeSpan.FromMinutes(10);
 
     private readonly List<(NoteData Data, DateTime DeletedAt)> _deletedNotes = new();
 
@@ -185,7 +184,7 @@ public sealed class NoteManager
         window.IsDeleted = true;
         window.Close();
 
-        // The deleted note held the keyboard focus; hand it to another note so Ctrl+Z works straight away.
+        // The deleted note held the keyboard focus; hand it to another note so the undo shortcut works straight away.
         if (wasActive)
             (_windows.FirstOrDefault(w => !w.IsEffectivelyCollapsed) ?? _windows.FirstOrDefault())?.Activate();
     }
@@ -214,19 +213,6 @@ public sealed class NoteManager
         window.FocusEditor();
         RequestSave();
         return window;
-    }
-
-    /// <summary>
-    /// Whether Ctrl+Z in a note should restore a deleted note rather than undo typing: only for a recent deletion,
-    /// and only once the note has nothing of its own left to undo (or hasn't been edited since the deletion).
-    /// </summary>
-    public bool ShouldUndoDeleteOnCtrlZ(bool editorCanUndo, DateTime lastEditedAt, DateTime? now = null)
-    {
-        if (_deletedNotes.Count == 0) return false;
-
-        var (_, deletedAt) = _deletedNotes[^1];
-        if ((now ?? DateTime.Now) - deletedAt > UndoShortcutWindow) return false;
-        return !editorCanUndo || lastEditedAt < deletedAt;
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)

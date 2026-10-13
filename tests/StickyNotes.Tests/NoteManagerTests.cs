@@ -147,41 +147,6 @@ public class NoteManagerTests
     }
 
     [Fact]
-    public void Ctrl_Z_restores_a_deleted_note_only_when_the_note_has_nothing_of_its_own_to_undo()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            Assert.False(scope.Manager.ShouldUndoDeleteOnCtrlZ(editorCanUndo: false, lastEditedAt: DateTime.MinValue));
-
-            scope.Manager.DeleteNote(scope.CreateNote("x"));
-
-            Assert.True(scope.Manager.ShouldUndoDeleteOnCtrlZ(editorCanUndo: false, lastEditedAt: DateTime.MaxValue));
-            Assert.True(scope.Manager.ShouldUndoDeleteOnCtrlZ(editorCanUndo: true, lastEditedAt: DateTime.MinValue));
-            Assert.False(scope.Manager.ShouldUndoDeleteOnCtrlZ(editorCanUndo: true, lastEditedAt: DateTime.Now.AddSeconds(5)));
-
-            scope.Manager.UndoDelete();
-            Assert.False(scope.Manager.ShouldUndoDeleteOnCtrlZ(editorCanUndo: false, lastEditedAt: DateTime.MinValue));
-        });
-    }
-
-    [Fact]
-    public void Ctrl_Z_ignores_deletions_older_than_ten_minutes_but_the_menu_can_still_restore_them()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            scope.Manager.DeleteNote(scope.CreateNote("old"));
-
-            Assert.True(scope.Manager.ShouldUndoDeleteOnCtrlZ(false, DateTime.MinValue, now: DateTime.Now.AddMinutes(9)));
-            Assert.False(scope.Manager.ShouldUndoDeleteOnCtrlZ(false, DateTime.MinValue, now: DateTime.Now.AddMinutes(11)));
-
-            Assert.True(scope.Manager.CanUndoDelete);
-            Assert.NotNull(scope.Manager.UndoDelete());
-        });
-    }
-
-    [Fact]
     public void A_restored_note_is_saved_to_the_notes_file()
     {
         UiThread.Run(() =>

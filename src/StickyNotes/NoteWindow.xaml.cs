@@ -30,7 +30,6 @@ public partial class NoteWindow : Window
     private bool _isManagerExpanded;
     private bool _isAlertFlashing;
     private bool _alertKeepOnTop;
-    private DateTime _lastEditedAt = DateTime.MinValue;
     private AlertGlowWindow? _alertGlow;
     private readonly DispatcherTimer _hoverTimer;
 
@@ -104,17 +103,23 @@ public partial class NoteWindow : Window
         };
 
         PreviewMouseDown += (_, _) => DismissReminderAlert();
+
+        // Window-level so it also works from a collapsed note, where the editor can't take focus.
         PreviewKeyDown += (_, e) =>
         {
-            // Window-level so it also works from a collapsed note, where the editor can't take focus.
-            if (e.Key == Key.Z && Keyboard.Modifiers == ModifierKeys.Control &&
-                _manager.ShouldUndoDeleteOnCtrlZ(Editor.CanUndo, _lastEditedAt))
-            {
-                _manager.UndoDelete();
-                e.Handled = true;
-            }
+            if (TryHandleUndoDeleteKey(e.Key, Keyboard.Modifiers)) e.Handled = true;
         };
         MouseLeave += NoteWindow_MouseLeave;
+    }
+
+    /// <summary>Ctrl+Shift+Z brings back the most recently deleted note. Returns true if the key was used.</summary>
+    internal bool TryHandleUndoDeleteKey(Key key, ModifierKeys modifiers)
+    {
+        if (key != Key.Z || modifiers != (ModifierKeys.Control | ModifierKeys.Shift)) return false;
+        if (!_manager.CanUndoDelete) return false;
+
+        _manager.UndoDelete();
+        return true;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -214,9 +219,6 @@ public partial class NoteWindow : Window
         if (!string.IsNullOrEmpty(Data.PlainText)) range.Text = Data.PlainText;
     }
 
-    private bool IsEmpty =>
-        string.IsNullOrWhiteSpace(new TextRange(Editor.Document.ContentStart, Editor.Document.ContentEnd).Text);
-
     // ---- Header actions ----
 
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -227,17 +229,7 @@ public partial class NoteWindow : Window
 
     private void NewNote_Click(object sender, RoutedEventArgs e) => _manager.CreateNote(this);
 
-    private void Delete_Click(object sender, RoutedEventArgs e)
-    {
-        if (!IsEmpty)
-        {
-            var result = MessageBox.Show(this,
-                "Delete this note?\n\nYou can bring it back with Ctrl+Z or Undo delete note in the tray menu.",
-                "Sticky Notes", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
-            if (result != MessageBoxResult.Yes) return;
-        }
-        _manager.DeleteNote(this);
-    }
+    private void Delete_Click(object sender, RoutedEventArgs e) => _manager.DeleteNote(this);
 
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
@@ -493,7 +485,6 @@ public partial class NoteWindow : Window
 
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
-        _lastEditedAt = DateTime.Now;
         _manager.RequestSave();
         QueueFormatButtonsUpdate();
 

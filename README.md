@@ -14,7 +14,7 @@ A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
 - Text wraps to the note width and scrolls when it overflows.
 - Formatting bar (shown while a note is focused): bold, italic, underline, strikethrough, bulleted and numbered lists, and checkboxes. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
 - **Checkboxes**: the checkbox button turns a line into a checklist item (a tick box instead of a bullet), or adds a tick box beside the bullet or number on an existing list item. Click a box to tick it; ticked items are struck through and greyed. Enter starts a new unticked item, Enter on an empty one (or Backspace right after the box) ends it. Typing `[] ` at the start of a line does the same as the button.
-- **Undo delete**: deleting a note that has content asks for confirmation; empty notes delete straight away. Either way, **Ctrl+Z** in a note (once that note has nothing of its own left to undo) or **Undo delete note** in the tray menu brings the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
+- **Undo delete**: deleting a note is immediate, with no confirmation, because it can always be undone. Press **Ctrl+Shift+Z** (the delete button's tooltip reminds you) or use **Undo delete note** in the tray menu to bring the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
 - Everything is saved automatically, by default to `%APPDATA%\StickyNotes\notes.json`.
 - **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), global shortcuts (show/hide notes, create new note), and whether to start with Windows. Change these later from **Settings…** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
 - On upgrade, existing data from the previous default folder is copied automatically; the originals are retained as a backup. Custom notes folders stay unchanged, and existing Windows startup entries are renamed. Exit the older version before launching the update. If both default folders contain different notes and the new folder has no settings yet, migration stops with an error rather than overwriting either file.
@@ -32,7 +32,7 @@ A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
 | Leave a list | Press Enter on an empty list item |
 | Indent / outdent list item | Tab / Shift+Tab at the start of the item |
 | Bigger / smaller text | Ctrl+] / Ctrl+[ |
-| Restore the last deleted note | Ctrl+Z (when the note has nothing else to undo), or tray menu |
+| Restore the last deleted note | Ctrl+Shift+Z (with a note focused), or tray menu |
 
 ## Install
 

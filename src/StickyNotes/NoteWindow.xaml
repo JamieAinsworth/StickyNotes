@@ -143,7 +143,7 @@
                     <Button x:Name="CollapseButton" DockPanel.Dock="Left" Style="{StaticResource IconButton}"
                             Content="&#xE70E;" ToolTip="Collapse note" Click="Collapse_Click" />
                     <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE74D;"
-                            ToolTip="Delete note" Click="Delete_Click" />
+                            ToolTip="Delete note (undo with Ctrl+Shift+Z)" Click="Delete_Click" />
                     <Button x:Name="ReminderButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
                             ToolTip="Set reminders" Click="Reminder_Click">
                         <Grid>

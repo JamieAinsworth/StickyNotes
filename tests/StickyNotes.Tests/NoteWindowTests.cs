@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Xunit;
@@ -26,6 +27,62 @@ public class NoteWindowTests
         Call(note, "ApplyCollapsed", true, true);
         UiThread.Wait(50);
         Call(note, "Header_MouseEnter", null, null);
+    }
+
+    [Fact]
+    public void Ctrl_Shift_Z_restores_the_most_recently_deleted_note()
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var survivor = scope.CreateNote("survivor");
+            scope.Manager.DeleteNote(scope.CreateNote("older"));
+            scope.Manager.DeleteNote(scope.CreateNote("newest"));
+            UiThread.Pump();
+            var both = ModifierKeys.Control | ModifierKeys.Shift;
+
+            Assert.True(survivor.TryHandleUndoDeleteKey(Key.Z, both));
+            UiThread.Pump();
+
+            Assert.Contains(scope.OpenNotes(), n => ManagerScope.TextOf(n) == "newest");
+            Assert.Single(scope.Manager.RecentlyDeleted());
+            Assert.Equal("older", scope.Manager.RecentlyDeleted()[0].Title);
+        });
+    }
+
+    [Theory]
+    [InlineData(Key.Z, ModifierKeys.Control)]
+    [InlineData(Key.Z, ModifierKeys.Shift)]
+    [InlineData(Key.Z, ModifierKeys.None)]
+    [InlineData(Key.Y, ModifierKeys.Control | ModifierKeys.Shift)]
+    [InlineData(Key.Z, ModifierKeys.Control | ModifierKeys.Shift | ModifierKeys.Alt)]
+    public void Other_key_combinations_do_not_restore_a_note(Key key, ModifierKeys modifiers)
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var survivor = scope.CreateNote("survivor");
+            scope.Manager.DeleteNote(scope.CreateNote("deleted"));
+            UiThread.Pump();
+
+            Assert.False(survivor.TryHandleUndoDeleteKey(key, modifiers));
+
+            Assert.Single(scope.OpenNotes());
+            Assert.True(scope.Manager.CanUndoDelete);
+        });
+    }
+
+    [Fact]
+    public void Ctrl_Shift_Z_is_left_alone_when_nothing_has_been_deleted()
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var note = scope.CreateNote("only note");
+
+            Assert.False(note.TryHandleUndoDeleteKey(Key.Z, ModifierKeys.Control | ModifierKeys.Shift));
+            Assert.Single(scope.OpenNotes());
+        });
     }
 
     [Fact]
