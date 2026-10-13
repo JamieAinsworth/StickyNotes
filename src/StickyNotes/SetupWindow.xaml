@@ -105,16 +105,28 @@
             <RadioButton x:Name="StartupNo" GroupName="Startup" Content="No" />
         </StackPanel>
 
-        <!-- Hotkey -->
-        <TextBlock Text="Show / hide notes hotkey" Style="{StaticResource SectionTitle}" Margin="0,20,0,8" />
+        <!-- Hotkeys -->
+        <TextBlock Text="Global shortcuts" Style="{StaticResource SectionTitle}" Margin="0,20,0,8" />
+
+        <TextBlock Text="Show / hide all notes" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4" />
         <DockPanel>
             <Button DockPanel.Dock="Right" Content="Clear" Margin="8,0,0,0" Click="ClearHotkey_Click" />
             <TextBox x:Name="HotkeyBox" IsReadOnly="True" VerticalContentAlignment="Center" Padding="4,3"
                      AutomationProperties.Name="Show or hide notes hotkey"
                      PreviewKeyDown="HotkeyBox_PreviewKeyDown" />
         </DockPanel>
-        <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Foreground="#555"
-                   Text="Click the box and press a combination such as Ctrl+Alt+N. Press it again to send the notes back to the desktop." />
+        <TextBlock Margin="0,4,0,10" TextWrapping="Wrap" Foreground="#555" FontSize="12"
+                   Text="Brings notes in front of other windows, or returns them to the desktop (e.g. Ctrl+Alt+N)." />
+
+        <TextBlock Text="New note" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,4" />
+        <DockPanel>
+            <Button DockPanel.Dock="Right" Content="Clear" Margin="8,0,0,0" Click="ClearNewNoteHotkey_Click" />
+            <TextBox x:Name="NewNoteHotkeyBox" IsReadOnly="True" VerticalContentAlignment="Center" Padding="4,3"
+                     AutomationProperties.Name="New note hotkey"
+                     PreviewKeyDown="NewNoteHotkeyBox_PreviewKeyDown" />
+        </DockPanel>
+        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Foreground="#555" FontSize="12"
+                   Text="Creates a new sticky note from anywhere in Windows (e.g. Ctrl+Alt+M)." />
 
         <TextBlock x:Name="ErrorText" Margin="0,16,0,0" Foreground="#B00020" TextWrapping="Wrap" Visibility="Collapsed" />
 

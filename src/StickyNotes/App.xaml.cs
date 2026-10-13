@@ -92,8 +92,15 @@ public partial class App : Application
 
         _manager = new NoteManager();
         _tray = new TrayIcon(_manager, OpenSettings, ExitApp);
-        _hotkey = new HotkeyManager(() => _manager?.ToggleForward());
-        _hotkey.Register(AppSettings.Current.ToggleHotkey);
+        _hotkey = new HotkeyManager();
+        bool toggleOk = _hotkey.Register(HotkeyManager.ToggleNotesId, AppSettings.Current.ToggleHotkey, () => _manager?.ToggleForward());
+        bool newNoteOk = _hotkey.Register(HotkeyManager.NewNoteId, AppSettings.Current.NewNoteHotkey, () => _manager?.CreateNote());
+        if (!toggleOk || !newNoteOk)
+        {
+            // A balloon rather than a dialog, so a quiet start with Windows isn't interrupted.
+            _tray.ShowNotice("Sticky Notes",
+                "A keyboard shortcut couldn't be registered; another app may be using it. Choose a different one in Settings.");
+        }
         int shown = _manager.LoadAndShow();
 
         // Opened by hand with no notes: start with one so something visibly happens.
@@ -179,8 +186,14 @@ public partial class App : Application
             if (_settingsWindow.Saved)
             {
                 _tray?.RefreshColour();
-                if (_hotkey?.Register(AppSettings.Current.ToggleHotkey) == false)
-                    MessageBox.Show("That hotkey couldn't be registered; it may be in use by another app. Choose a different one in Settings.",
+
+                // Release both first: a swapped pair would otherwise clash with the other shortcut's old registration.
+                _hotkey?.Unregister(HotkeyManager.ToggleNotesId);
+                _hotkey?.Unregister(HotkeyManager.NewNoteId);
+                bool toggleOk = _hotkey?.Register(HotkeyManager.ToggleNotesId, AppSettings.Current.ToggleHotkey, () => _manager?.ToggleForward()) ?? true;
+                bool newNoteOk = _hotkey?.Register(HotkeyManager.NewNoteId, AppSettings.Current.NewNoteHotkey, () => _manager?.CreateNote()) ?? true;
+                if (!toggleOk || !newNoteOk)
+                    MessageBox.Show("One or more hotkeys couldn't be registered; they may be in use by another app. Choose a different combination in Settings.",
                         "Sticky Notes", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             if (_settingsWindow.ReloadNotes) _manager?.Reload();

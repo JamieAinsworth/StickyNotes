@@ -1,6 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Net.Http;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace StickyNotes;
@@ -21,6 +24,28 @@ public sealed class TrayIcon : IDisposable
 
         _menu = new ContextMenuStrip();
         _menu.Items.Add("New note", null, (_, _) => manager.CreateNote());
+
+        var undoDelete = new ToolStripMenuItem("Undo delete note") { Enabled = false };
+        undoDelete.Click += (_, _) => manager.UndoDelete();
+        _menu.Items.Add(undoDelete);
+
+        var recentlyDeleted = new ToolStripMenuItem("Recently deleted") { Enabled = false };
+        _menu.Items.Add(recentlyDeleted);
+        _menu.Opening += (_, _) =>
+        {
+            undoDelete.Enabled = manager.CanUndoDelete;
+
+            recentlyDeleted.DropDownItems.Clear();
+            var deleted = manager.RecentlyDeleted();
+            recentlyDeleted.Enabled = deleted.Count > 0;
+            foreach (var note in deleted)
+            {
+                // '&' would otherwise be read as a menu access key.
+                var item = new ToolStripMenuItem($"{note.Title.Replace("&", "&&")}  ·  {note.AgeText}");
+                item.Click += (_, _) => manager.UndoDelete(note.Data);
+                recentlyDeleted.DropDownItems.Add(item);
+            }
+        };
         _menu.Items.Add("Show desktop", null, (_, _) => ShowDesktop());
         _menu.Items.Add(new ToolStripSeparator());
 
@@ -41,6 +66,10 @@ public sealed class TrayIcon : IDisposable
         };
         _menu.Items.Add(startup);
         _menu.Items.Add("Settings…", null, (_, _) => openSettings());
+
+        var updates = new ToolStripMenuItem("Check for updates…");
+        updates.Click += async (_, _) => await CheckForUpdatesAsync(updates);
+        _menu.Items.Add(updates);
         _menu.Opening += (_, _) =>
         {
             try { startup.Checked = StartupManager.IsEnabled; } catch { }
@@ -60,6 +89,57 @@ public sealed class TrayIcon : IDisposable
         {
             if (e.Button == MouseButtons.Left) manager.BringForward();
         };
+    }
+
+    /// <summary>Shows a short, non-blocking message from the tray icon.</summary>
+    public void ShowNotice(string title, string text)
+    {
+        _notifyIcon.BalloonTipTitle = title;
+        _notifyIcon.BalloonTipText = text;
+        _notifyIcon.BalloonTipIcon = ToolTipIcon.Warning;
+        _notifyIcon.ShowBalloonTip(8000);
+    }
+
+    private static async Task CheckForUpdatesAsync(ToolStripMenuItem item)
+    {
+        item.Enabled = false;
+        try
+        {
+            var info = await UpdateChecker.CheckAsync();
+
+            if (info.IsNewer)
+            {
+                var open = MessageBox.Show(
+                    $"Sticky Notes {info.Latest} is available (you have {info.Current}).\n\nOpen the download page?",
+                    "Sticky Notes", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (open == DialogResult.Yes)
+                    Process.Start(new ProcessStartInfo(info.Url) { UseShellExecute = true });
+            }
+            else if (info.Latest == null)
+            {
+                MessageBox.Show("No published releases were found.", "Sticky Notes",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show($"You're up to date (version {info.Current}).", "Sticky Notes",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            MessageBox.Show("Couldn't reach GitHub to check for updates. Check your internet connection and try again.",
+                "Sticky Notes", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Couldn't check for updates.\n\n" + ex.Message,
+                "Sticky Notes", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            item.Enabled = true;
+        }
     }
 
     private static void ShowDesktop()

@@ -22,4 +22,10 @@ public sealed class NoteData
 
     /// <summary>Plain-text fallback in case the rich content can't be loaded.</summary>
     public string PlainText { get; set; } = string.Empty;
+
+    /// <summary>Whether the note is collapsed down to its title bar.</summary>
+    public bool IsCollapsed { get; set; }
+
+    /// <summary>Active or past reminders for this note.</summary>
+    public System.Collections.Generic.List<NoteReminder> Reminders { get; set; } = new();
 }

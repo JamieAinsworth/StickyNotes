@@ -8,13 +8,17 @@ A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
 - Notes live on the desktop: they sit behind your other windows, stay visible on "Show desktop" (Win+D), and have no taskbar button or Alt+Tab entry.
 - Drag a note by its header; resize from any edge or corner.
 - **Pin** a note to lock its position and size.
+- **Collapse** a note down to its top bar. Hovering over the top bar expands the note for full interaction until the mouse leaves the note. When bringing notes forward with the global hotkey, collapsed notes expand until returned to the desktop.
+- **Reminders** per note: schedule one-time or daily recurring reminders (with support for multiple reminders on the same note). When triggered, the note comes forward with an audible chime and a pulsing white glow around the note, tinted with the note's colour, that persists until you click the note. Once clicked, the glow stops and the note stays above other windows until you click away, then returns to the desktop.
 - **Colour** picker (yellow, orange, pink, purple, blue, green, grey).
 - Text wraps to the note width and scrolls when it overflows.
-- Formatting bar (shown while a note is focused): bold, italic, underline, strikethrough, bulleted and numbered lists. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
+- Formatting bar (shown while a note is focused): bold, italic, underline, strikethrough, bulleted and numbered lists, and checkboxes. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
+- **Checkboxes**: the checkbox button turns a line into a checklist item (a tick box instead of a bullet), or adds a tick box beside the bullet or number on an existing list item. Click a box to tick it; ticked items are struck through and greyed. Enter starts a new unticked item, Enter on an empty one (or Backspace right after the box) ends it. Typing `[] ` at the start of a line does the same as the button.
+- **Undo delete**: deleting a note that has content asks for confirmation; empty notes delete straight away. Either way, **Ctrl+Z** in a note (once that note has nothing of its own left to undo) or **Undo delete note** in the tray menu brings the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
 - Everything is saved automatically, by default to `%APPDATA%\StickyNotes\notes.json`.
-- **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), and whether to start with Windows. Change these later from **Settings…** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
+- **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), global shortcuts (show/hide notes, create new note), and whether to start with Windows. Change these later from **Settings…** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
 - On upgrade, existing data from the previous default folder is copied automatically; the originals are retained as a backup. Custom notes folders stay unchanged, and existing Windows startup entries are renamed. Exit the older version before launching the update. If both default folders contain different notes and the new folder has no settings yet, migration stops with an error rather than overwriting either file.
-- Tray icon (in the taskbar's hidden icons), drawn in your default note colour: right-click for **New note**, **Show desktop**, **Start with Windows**, **Settings…**, **Exit**. Double-click the icon for a new note. The app keeps running in the tray even when you have no notes, and when it starts with Windows it waits there quietly instead of opening an empty note.
+- Tray icon (in the taskbar's hidden icons), drawn in your default note colour: right-click for **New note**, **Undo delete note**, **Recently deleted**, **Show desktop**, **Start with Windows**, **Settings…**, **Check for updates…**, **Exit**. Double-click the icon for a new note. The app keeps running in the tray even when you have no notes, and when it starts with Windows it waits there quietly instead of opening an empty note.
 
 ### Keyboard shortcuts
 
@@ -24,9 +28,11 @@ A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
 | Strikethrough | Ctrl+T |
 | Bulleted list | Ctrl+Shift+L, or type `- ` or `* ` at the start of a line |
 | Numbered list | Ctrl+Shift+N, or type `1. ` at the start of a line |
+| Checkbox / checklist | Ctrl+Shift+C, or type `[] ` at the start of a line |
 | Leave a list | Press Enter on an empty list item |
 | Indent / outdent list item | Tab / Shift+Tab at the start of the item |
 | Bigger / smaller text | Ctrl+] / Ctrl+[ |
+| Restore the last deleted note | Ctrl+Z (when the note has nothing else to undo), or tray menu |
 
 ## Install
 
@@ -65,6 +71,14 @@ Launching the app again while it's running just opens a new note. **Start with W
 ```
 
 The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`). Some antivirus tools block locally built, unsigned exes; if that happens, use the GitHub workflow below instead.
+
+### Run the tests
+
+```powershell
+dotnet test tests\StickyNotes.Tests
+```
+
+The tests cover the checklist editing, reminders, undo for deleted notes, shortcuts and the update check. Some open real (off-screen) note windows, so they need a normal Windows desktop session; they use a temporary data folder and never touch your real notes. The [CI workflow](.github/workflows/ci.yml) builds and runs them on every pull request and on pushes to `main`.
 
 ### Publish a GitHub release
 

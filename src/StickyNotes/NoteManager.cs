@@ -14,6 +14,7 @@ public sealed class NoteManager
     private readonly List<NoteData> _pendingRecreate = new();
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _recreateTimer;
+    private readonly DispatcherTimer _reminderTimer;
     private int _recreateAttempts;
     private bool _shuttingDown;
     private bool _reloading;
@@ -32,6 +33,33 @@ public sealed class NoteManager
 
         _recreateTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _recreateTimer.Tick += (_, _) => TryRecreatePending();
+
+        _reminderTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _reminderTimer.Tick += (_, _) => CheckReminders();
+        _reminderTimer.Start();
+    }
+
+    private void CheckReminders()
+    {
+        var now = DateTime.Now;
+        bool changed = false;
+
+        foreach (var window in _windows.ToList())
+        {
+            var note = window.Data;
+            if (note.Reminders == null || note.Reminders.Count == 0) continue;
+
+            foreach (var reminder in note.Reminders)
+            {
+                if (!reminder.IsDue(now)) continue;
+
+                reminder.MarkFired(now);
+                changed = true;
+                window.TriggerReminderAlert();
+            }
+        }
+
+        if (changed) RequestSave();
     }
 
     /// <summary>True while all notes are brought in front of other windows.</summary>
@@ -47,7 +75,11 @@ public sealed class NoteManager
     {
         Raised = true;
         _stickyRaise = sticky;
-        foreach (var window in _windows) window.ApplyZOrder();
+        foreach (var window in _windows)
+        {
+            window.ApplyZOrder();
+            window.OnManagerRaised();
+        }
         if (_windows.Count == 0 || sticky) return;
 
         _windows[0].Activate();
@@ -73,7 +105,11 @@ public sealed class NoteManager
     {
         Raised = false;
         _stickyRaise = false;
-        foreach (var window in _windows) window.ApplyZOrder();
+        foreach (var window in _windows)
+        {
+            window.ApplyZOrder();
+            window.OnManagerLowered();
+        }
     }
 
     public void ToggleForward()
@@ -131,10 +167,66 @@ public sealed class NoteManager
         return window;
     }
 
+    private const int MaxUndoableDeletes = 10;
+    private static readonly TimeSpan UndoShortcutWindow = TimeSpan.FromMinutes(10);
+
+    private readonly List<(NoteData Data, DateTime DeletedAt)> _deletedNotes = new();
+
+    /// <summary>True when a deleted note can be brought back.</summary>
+    public bool CanUndoDelete => _deletedNotes.Count > 0;
+
     public void DeleteNote(NoteWindow window)
     {
+        var data = window.CaptureData();
+        _deletedNotes.Add((data, DateTime.Now));
+        if (_deletedNotes.Count > MaxUndoableDeletes) _deletedNotes.RemoveAt(0);
+
+        bool wasActive = window.IsActive;
         window.IsDeleted = true;
         window.Close();
+
+        // The deleted note held the keyboard focus; hand it to another note so Ctrl+Z works straight away.
+        if (wasActive)
+            (_windows.FirstOrDefault(w => !w.IsEffectivelyCollapsed) ?? _windows.FirstOrDefault())?.Activate();
+    }
+
+    /// <summary>Brings back the most recently deleted note, where it was, with its content and reminders.</summary>
+    public NoteWindow? UndoDelete()
+    {
+        if (_deletedNotes.Count == 0) return null;
+        return UndoDelete(_deletedNotes[^1].Data);
+    }
+
+    /// <summary>Deleted notes that can still be restored, newest first.</summary>
+    public IReadOnlyList<DeletedNote> RecentlyDeleted() =>
+        _deletedNotes.AsEnumerable().Reverse().Select(d => new DeletedNote(d.Data, d.DeletedAt)).ToList();
+
+    /// <summary>Brings back a specific deleted note, where it was, with its content and reminders.</summary>
+    public NoteWindow? UndoDelete(NoteData data)
+    {
+        int index = _deletedNotes.FindIndex(d => ReferenceEquals(d.Data, data));
+        if (index < 0) return null;
+        _deletedNotes.RemoveAt(index);
+
+        EnsureOnScreen(data);
+        var window = ShowNote(data);
+        window.Activate();
+        window.FocusEditor();
+        RequestSave();
+        return window;
+    }
+
+    /// <summary>
+    /// Whether Ctrl+Z in a note should restore a deleted note rather than undo typing: only for a recent deletion,
+    /// and only once the note has nothing of its own left to undo (or hasn't been edited since the deletion).
+    /// </summary>
+    public bool ShouldUndoDeleteOnCtrlZ(bool editorCanUndo, DateTime lastEditedAt, DateTime? now = null)
+    {
+        if (_deletedNotes.Count == 0) return false;
+
+        var (_, deletedAt) = _deletedNotes[^1];
+        if ((now ?? DateTime.Now) - deletedAt > UndoShortcutWindow) return false;
+        return !editorCanUndo || lastEditedAt < deletedAt;
     }
 
     private void OnWindowClosed(object? sender, EventArgs e)
@@ -193,6 +285,9 @@ public sealed class NoteManager
         _saveTimer.Stop();
         _recreateTimer.Stop();
         _pendingRecreate.Clear();
+
+        // The deleted notes belong to the notes being closed; restoring one into the new set would mix them up.
+        _deletedNotes.Clear();
         _reloading = true;
         try
         {
@@ -210,6 +305,7 @@ public sealed class NoteManager
         if (_shuttingDown) return;
         _saveTimer.Stop();
         _recreateTimer.Stop();
+        _reminderTimer.Stop();
         SaveNow();
         _shuttingDown = true;
         CloseAllWindows();

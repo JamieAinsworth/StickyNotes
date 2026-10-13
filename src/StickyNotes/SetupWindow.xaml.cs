@@ -35,6 +35,7 @@ public partial class SetupWindow : Window
 
         FolderBox.Text = settings.ResolvedDataFolder;
         HotkeyBox.Text = settings.ToggleHotkey ?? string.Empty;
+        NewNoteHotkeyBox.Text = settings.NewNoteHotkey ?? string.Empty;
 
         bool startup = false;
         try { startup = StartupManager.IsEnabled; } catch { }
@@ -50,7 +51,13 @@ public partial class SetupWindow : Window
         }
     }
 
-    private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void HotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e) =>
+        HandleHotkeyKeyDown(HotkeyBox, e);
+
+    private void NewNoteHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e) =>
+        HandleHotkeyKeyDown(NewNoteHotkeyBox, e);
+
+    private void HandleHotkeyKeyDown(TextBox targetBox, KeyEventArgs e)
     {
         e.Handled = true;
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
@@ -58,7 +65,7 @@ public partial class SetupWindow : Window
 
         if (modifiers == ModifierKeys.None && key is Key.Back or Key.Delete or Key.Escape)
         {
-            HotkeyBox.Text = string.Empty;
+            targetBox.Text = string.Empty;
             return;
         }
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift
@@ -66,11 +73,13 @@ public partial class SetupWindow : Window
             return;
         if (modifiers == ModifierKeys.None) return;
 
-        HotkeyBox.Text = HotkeyManager.Format(modifiers, key);
+        targetBox.Text = HotkeyManager.Format(modifiers, key);
         ErrorText.Visibility = Visibility.Collapsed;
     }
 
     private void ClearHotkey_Click(object sender, RoutedEventArgs e) => HotkeyBox.Text = string.Empty;
+
+    private void ClearNewNoteHotkey_Click(object sender, RoutedEventArgs e) => NewNoteHotkeyBox.Text = string.Empty;
 
     private void Swatch_Loaded(object sender, RoutedEventArgs e)
     {
@@ -110,6 +119,12 @@ public partial class SetupWindow : Window
     {
         ErrorText.Visibility = Visibility.Collapsed;
 
+        if (HotkeyManager.AreSame(HotkeyBox.Text, NewNoteHotkeyBox.Text))
+        {
+            ShowError("The show/hide shortcut and the new note shortcut can't be the same. Choose a different combination for one of them.");
+            return;
+        }
+
         string folder = ExpandPath(FolderBox.Text);
         if (folder.Length == 0) folder = AppSettings.DefaultDataFolder;
         if (!Path.IsPathFullyQualified(folder))
@@ -141,6 +156,7 @@ public partial class SetupWindow : Window
         {
             DefaultColor = _selectedColour,
             ToggleHotkey = string.IsNullOrWhiteSpace(HotkeyBox.Text) ? null : HotkeyBox.Text,
+            NewNoteHotkey = string.IsNullOrWhiteSpace(NewNoteHotkeyBox.Text) ? null : NewNoteHotkeyBox.Text,
             DataFolder = AppSettings.IsSameFolder(folder, AppSettings.DefaultDataFolder) ? null : folder,
         };
 

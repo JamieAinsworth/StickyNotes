@@ -18,7 +18,7 @@ public sealed class AppSettings
 
     public static string SettingsPath { get; } = Path.Combine(DefaultDataFolder, "settings.json");
 
-    public static AppSettings Current { get; private set; } = new();
+    public static AppSettings Current { get; internal set; } = new();
 
     public string DefaultColor { get; set; } = NoteColors.Default.Name;
 
@@ -27,6 +27,9 @@ public sealed class AppSettings
 
     /// <summary>Global hotkey that shows/hides all notes, e.g. "Ctrl+Alt+N"; null or empty means none.</summary>
     public string? ToggleHotkey { get; set; }
+
+    /// <summary>Global hotkey to create a new note, e.g. "Ctrl+Alt+M"; null or empty means none.</summary>
+    public string? NewNoteHotkey { get; set; }
 
     [JsonIgnore]
     public string ResolvedDataFolder =>

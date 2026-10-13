@@ -1,53 +1,91 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Windows.Forms;
 using System.Windows.Input;
 
 namespace StickyNotes;
 
-/// <summary>Registers one global hotkey, described as text such as "Ctrl+Alt+N".</summary>
+/// <summary>Registers global hotkeys, described as text such as "Ctrl+Alt+N".</summary>
 public sealed class HotkeyManager : NativeWindow, IDisposable
 {
+    public const int ToggleNotesId = 1;
+    public const int NewNoteId = 2;
+
     private const int WM_HOTKEY = 0x0312;
-    private const int HotkeyId = 1;
     private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_SHIFT = 0x4, MOD_WIN = 0x8, MOD_NOREPEAT = 0x4000;
 
-    private readonly Action _pressed;
-    private bool _registered;
+    private readonly Dictionary<int, Action> _actions = new();
+    private readonly HashSet<int> _registered = new();
 
-    public HotkeyManager(Action pressed)
+    public HotkeyManager()
     {
-        _pressed = pressed;
         // Message-only window to receive WM_HOTKEY.
         CreateHandle(new CreateParams { Parent = new IntPtr(-3) });
     }
 
-    /// <summary>Replaces the current hotkey. Returns false if the text is invalid or the combination is taken.</summary>
-    public bool Register(string? text)
+    /// <summary>
+    /// Registers or replaces a hotkey with the specified ID.
+    /// Returns false if the text is invalid or the combination is already in use by another app.
+    /// </summary>
+    public bool Register(int id, string? text, Action action)
     {
-        Unregister();
+        Unregister(id);
         if (string.IsNullOrWhiteSpace(text)) return true;
         if (!TryParse(text, out uint modifiers, out uint vk)) return false;
-        _registered = NativeMethods.RegisterHotKey(Handle, HotkeyId, modifiers | MOD_NOREPEAT, vk);
-        return _registered;
+
+        bool success = NativeMethods.RegisterHotKey(Handle, id, modifiers | MOD_NOREPEAT, vk);
+        if (success)
+        {
+            _registered.Add(id);
+            _actions[id] = action;
+        }
+        return success;
     }
 
-    private void Unregister()
+    public void Unregister(int id)
     {
-        if (!_registered) return;
-        NativeMethods.UnregisterHotKey(Handle, HotkeyId);
-        _registered = false;
+        if (!_registered.Contains(id)) return;
+        NativeMethods.UnregisterHotKey(Handle, id);
+        _registered.Remove(id);
+        _actions.Remove(id);
     }
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HotkeyId) _pressed();
-        else base.WndProc(ref m);
+        if (m.Msg == WM_HOTKEY)
+        {
+            int id = m.WParam.ToInt32();
+            if (_actions.TryGetValue(id, out var action))
+            {
+                action();
+                return;
+            }
+        }
+        base.WndProc(ref m);
     }
 
     public void Dispose()
     {
-        Unregister();
+        foreach (int id in _registered.ToList())
+        {
+            NativeMethods.UnregisterHotKey(Handle, id);
+        }
+        _registered.Clear();
+        _actions.Clear();
         if (Handle != IntPtr.Zero) DestroyHandle();
+    }
+
+    /// <summary>True when both texts describe the same key combination (blank texts never conflict).</summary>
+    public static bool AreSame(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first) || string.IsNullOrWhiteSpace(second)) return false;
+
+        if (TryParse(first, out uint firstModifiers, out uint firstKey) &&
+            TryParse(second, out uint secondModifiers, out uint secondKey))
+            return firstModifiers == secondModifiers && firstKey == secondKey;
+
+        return string.Equals(first.Trim(), second.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     public static string Format(ModifierKeys modifiers, Key key)
@@ -79,7 +117,7 @@ public sealed class HotkeyManager : NativeWindow, IDisposable
             }
         }
 
-        if (!Enum.TryParse(parts[^1], out Key key) || key == Key.None) return false;
+        if (!Enum.TryParse(parts[^1], ignoreCase: true, out Key key) || key == Key.None || !Enum.IsDefined(key)) return false;
         vk = (uint)KeyInterop.VirtualKeyFromKey(key);
         return vk != 0;
     }
