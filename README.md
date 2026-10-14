@@ -6,6 +6,7 @@ A lightweight sticky-notes app for Windows 10/11 built with WPF (.NET 10).
 ## Features
 
 - Notes live on the desktop: they sit behind your other windows, stay visible on "Show desktop" (Win+D), and have no taskbar button or Alt+Tab entry.
+- **Multiple monitors**: if a monitor is disconnected (undocking a laptop, Win+P to "PC screen only", and so on), any note that was on it moves to the main screen automatically, cascaded so they don't stack. The app also checks at startup. Notes stay where they were moved if the monitor comes back.
 - Drag a note by its header; resize from any edge or corner.
 - **Pin** a note to lock its position and size.
 - **Collapse** a note down to its top bar. Hovering over the top bar expands the note for full interaction until the mouse leaves the note. When bringing notes forward with the global hotkey, collapsed notes expand until returned to the desktop.

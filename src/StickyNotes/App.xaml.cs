@@ -103,6 +103,9 @@ public partial class App : Application
         }
         int shown = _manager.LoadAndShow();
 
+        // Saved positions can point at a monitor that has since been disconnected (or sit in a gap between monitors).
+        _manager.RescueOffScreenNotes();
+
         // Opened by hand with no notes: start with one so something visibly happens.
         // With --background (starting with Windows), just sit in the tray; use the tray icon's "New note" to add one.
         if (shown == 0 && !background) _manager.CreateNote();

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
+using Microsoft.Win32;
 
 namespace StickyNotes;
 
@@ -12,9 +13,11 @@ public sealed class NoteManager
 
     private readonly List<NoteWindow> _windows = new();
     private readonly List<NoteData> _pendingRecreate = new();
+    private readonly Dispatcher _dispatcher;
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _recreateTimer;
     private readonly DispatcherTimer _reminderTimer;
+    private readonly DispatcherTimer _displayTimer;
     private int _recreateAttempts;
     private bool _shuttingDown;
     private bool _reloading;
@@ -24,6 +27,8 @@ public sealed class NoteManager
 
     public NoteManager()
     {
+        _dispatcher = Dispatcher.CurrentDispatcher;
+
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(600) };
         _saveTimer.Tick += (_, _) =>
         {
@@ -37,6 +42,46 @@ public sealed class NoteManager
         _reminderTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _reminderTimer.Tick += (_, _) => CheckReminders();
         _reminderTimer.Start();
+
+        // Docking, undocking and Win+P each raise several display events in a burst; wait for them to settle.
+        _displayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+        _displayTimer.Tick += (_, _) =>
+        {
+            _displayTimer.Stop();
+            RescueOffScreenNotes();
+        };
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+    }
+
+    // Raised on a system thread, so hop onto the UI thread before touching timers or windows.
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e) =>
+        _dispatcher.BeginInvoke(() =>
+        {
+            if (_shuttingDown) return;
+            _displayTimer.Stop();
+            _displayTimer.Start();
+        });
+
+    /// <summary>Moves any note that is no longer on a connected monitor onto the main one. Returns how many moved.</summary>
+    public int RescueOffScreenNotes()
+    {
+        var screens = System.Windows.Forms.Screen.AllScreens;
+        if (screens.Length == 0) return 0;
+
+        var main = System.Windows.Forms.Screen.PrimaryScreen ?? screens[0];
+        return RescueOffScreenNotes(
+            screens.Select(s => PixelRect.From(s.Bounds)).ToList(),
+            PixelRect.From(main.WorkingArea));
+    }
+
+    internal int RescueOffScreenNotes(IReadOnlyList<PixelRect> monitors, PixelRect mainWorkArea)
+    {
+        int moved = 0;
+        foreach (var window in _windows.ToList())
+        {
+            if (window.EnsureReachable(monitors, mainWorkArea, moved)) moved++;
+        }
+        return moved;
     }
 
     private void CheckReminders()
@@ -289,9 +334,11 @@ public sealed class NoteManager
     public void Shutdown()
     {
         if (_shuttingDown) return;
+        SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         _saveTimer.Stop();
         _recreateTimer.Stop();
         _reminderTimer.Stop();
+        _displayTimer.Stop();
         SaveNow();
         _shuttingDown = true;
         CloseAllWindows();
