@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
@@ -162,6 +163,26 @@ public partial class NoteWindow : Window
         if (_hwnd == IntPtr.Zero) return;
         NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_BOTTOM, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+    }
+
+    /// <summary>
+    /// If the note's header is no longer on any connected monitor (a screen was unplugged or the display layout
+    /// changed), moves it onto the main monitor. Notes are owned by the desktop window, so Windows doesn't do
+    /// this for them. Works in physical pixels so it's correct on mixed-DPI setups.
+    /// </summary>
+    /// <param name="slot">Which rescued note this is, so several don't land on top of each other.</param>
+    /// <returns>True if the note was moved.</returns>
+    internal bool EnsureReachable(IReadOnlyList<PixelRect> monitors, PixelRect mainWorkArea, int slot)
+    {
+        if (_hwnd == IntPtr.Zero || !NativeMethods.GetWindowRect(_hwnd, out var rect)) return false;
+
+        int headerHeight = (int)Math.Ceiling(CollapsedHeight * VisualTreeHelper.GetDpi(this).DpiScaleY);
+        var header = new PixelRect(rect.Left, rect.Top, rect.Right, rect.Top + headerHeight);
+        if (ScreenPlacement.IsReachable(header, monitors)) return false;
+
+        var (x, y) = ScreenPlacement.Rescue(rect.Right - rect.Left, rect.Bottom - rect.Top, mainWorkArea, slot);
+        return NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, x, y, 0, 0,
+            NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
     }
 
     protected override void OnClosing(CancelEventArgs e)
