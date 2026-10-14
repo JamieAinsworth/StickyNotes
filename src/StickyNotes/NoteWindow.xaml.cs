@@ -507,6 +507,11 @@ public partial class NoteWindow : Window
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
         _manager.RequestSave();
+
+        // Text added to a ticked item should look done like the rest of it. Applied after this change completes.
+        var edited = Editor.Selection.End.Paragraph;
+        if (edited != null && ChecklistEditor.IsDone(edited))
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => ChecklistEditor.EnsureDoneStyle(Editor, edited));
         QueueFormatButtonsUpdate();
 
         // Text was only inserted (not deleted) and the paragraph is now exactly a list marker + space.

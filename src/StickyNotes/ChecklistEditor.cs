@@ -139,6 +139,34 @@ internal static class ChecklistEditor
         }
     }
 
+    /// <summary>
+    /// Makes sure all the text of a ticked item looks done (struck through and grey). Ticking only styles the text
+    /// that exists at that moment, so text typed or pasted afterwards (for instance into an item that was ticked
+    /// while still empty) has to be brought into line.
+    /// </summary>
+    public static void EnsureDoneStyle(RichTextBox editor, Paragraph paragraph)
+    {
+        if (!IsDone(paragraph)) return;
+
+        var contentStart = Advance(PrefixStart(paragraph), 2);
+        if (contentStart == null || contentStart.CompareTo(paragraph.ContentEnd) >= 0) return;
+
+        var content = new TextRange(contentStart, paragraph.ContentEnd);
+        bool grey = content.GetPropertyValue(TextElement.ForegroundProperty) is SolidColorBrush brush &&
+                    brush.Color == ((SolidColorBrush)DoneBrush).Color;
+        if (grey && TextFormatting.IsFullyStruck(content)) return;
+
+        editor.BeginChange();
+        try
+        {
+            StyleContent(paragraph, done: true, editor.Foreground);
+        }
+        finally
+        {
+            editor.EndChange();
+        }
+    }
+
     /// <summary>Re-applies the box font to every checkbox in a document (notes saved before the font was pinned).</summary>
     public static void RefreshGlyphs(FlowDocument document) => RefreshGlyphs(document.Blocks);
 
