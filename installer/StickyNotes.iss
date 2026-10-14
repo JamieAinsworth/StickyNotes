@@ -1,7 +1,7 @@
 ; Inno Setup script for Sticky Notes. Build it with: .\build.ps1 -Installer -Version 1.2.3
 
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.1.1"
 #endif
 #ifndef AppSourceDir
   #define AppSourceDir "..\artifacts\app"
