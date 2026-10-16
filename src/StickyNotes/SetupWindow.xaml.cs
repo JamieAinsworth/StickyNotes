@@ -173,6 +173,8 @@ public partial class SetupWindow : Window
         if (fileToDeleteAfterSave != null)
         {
             try { File.Delete(fileToDeleteAfterSave); } catch { }
+            var oldFolder = Path.GetDirectoryName(fileToDeleteAfterSave);
+            if (oldFolder != null) ImageStore.DeleteAll(oldFolder);
         }
 
         try
@@ -212,6 +214,7 @@ public partial class SetupWindow : Window
                 if (File.Exists(oldFile))
                 {
                     File.Copy(oldFile, newFile);
+                    ImageStore.CopyAll(AppSettings.Current.ResolvedDataFolder, folder);
                     oldFileToDelete = oldFile;
                 }
                 return true;
@@ -237,6 +240,7 @@ public partial class SetupWindow : Window
                 case MessageBoxResult.No:
                     File.Copy(newFile, newFile + ".bak-" + DateTime.Now.ToString("yyyyMMddHHmmss"), overwrite: true);
                     File.Copy(oldFile, newFile, overwrite: true);
+                    ImageStore.CopyAll(AppSettings.Current.ResolvedDataFolder, folder);
                     oldFileToDelete = oldFile;
                     return true;
                 default:

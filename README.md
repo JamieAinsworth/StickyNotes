@@ -1,4 +1,4 @@
-ï»¿# Sticky Notes
+# Sticky Notes
 Sticky notes that dont annoy me
 
 A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
@@ -15,11 +15,13 @@ A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
 - Text wraps to the note width and scrolls when it overflows.
 - Formatting bar (shown while a note is focused): bold, italic, underline, strikethrough, bulleted and numbered lists, and checkboxes. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
 - **Checkboxes**: the checkbox button turns a line into a checklist item (a tick box instead of a bullet), or adds a tick box beside the bullet or number on an existing list item. Click a box to tick it; ticked items are struck through and greyed. Enter starts a new unticked item, Enter on an empty one (or Backspace right after the box) ends it. Typing `[] ` at the start of a line does the same as the button.
-- **Undo delete**: deleting a note is immediate, with no confirmation, because it can always be undone. Press **Ctrl+Shift+Z** (the delete button's tooltip reminds you) or use **Undo delete note** in the tray menu to bring the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
+- **Links**: web addresses (`https://…`, `http://…` or `www.…`) typed or pasted into a note become links once you move past them. **Ctrl+click** a link to open it in your default browser; a plain click just places the cursor so you can edit it. Only web addresses are opened, never local files or programs.
+- **Images**: paste a screenshot or copied image (Ctrl+V), or paste or drag in image files (PNG, JPEG, GIF, BMP). Images shrink to fit the note's width and grow back as you widen it. Hovering an image outlines it and shows a toolbar to **preview**, **copy** or **remove** it, plus a corner handle to **resize** it (drag it back to full size to fit the note again; Ctrl+Z undoes a resize). **Click** an image to open it in the built-in viewer: scroll to zoom around the mouse, drag to pan, double-click to switch between fit and actual size, and copy or save a copy from its toolbar (Esc closes it). Images are stored as files in an `images` folder next to `notes.json` and move with your notes if you change the notes folder. Images that are no longer used by any note (including recently deleted notes) are cleaned up at start-up or exit once they've been unused for over a day, so undo keeps working.
+- **Undo delete**: deleting a note is immediate, with no confirmation, because it can always be undone. Use **Undo delete note** in the tray menu (right-click the tray icon) to bring the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
 - Everything is saved automatically, by default to `%APPDATA%\StickyNotes\notes.json`.
-- **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), global shortcuts (show/hide notes, create new note), and whether to start with Windows. Change these later from **Settingsâ€¦** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
+- **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), global shortcuts (show/hide notes, create new note), and whether to start with Windows. Change these later from **Settings…** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
 - On upgrade, existing data from the previous default folder is copied automatically; the originals are retained as a backup. Custom notes folders stay unchanged, and existing Windows startup entries are renamed. Exit the older version before launching the update. If both default folders contain different notes and the new folder has no settings yet, migration stops with an error rather than overwriting either file.
-- Tray icon (in the taskbar's hidden icons), drawn in your default note colour: right-click for **New note**, **Undo delete note**, **Recently deleted**, **Show desktop**, **Start with Windows**, **Settingsâ€¦**, **Check for updatesâ€¦**, **Exit**. Double-click the icon for a new note. The app keeps running in the tray even when you have no notes, and when it starts with Windows it waits there quietly instead of opening an empty note.
+- Tray icon (in the taskbar's hidden icons), drawn in your default note colour: right-click for **New note**, **Undo delete note**, **Recently deleted**, **Show desktop**, **Start with Windows**, **Settings…**, **Check for updates…**, **Exit**. Double-click the icon for a new note. The app keeps running in the tray even when you have no notes, and when it starts with Windows it waits there quietly instead of opening an empty note.
 
 ### Keyboard shortcuts
 
@@ -33,13 +35,16 @@ A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
 | Leave a list | Press Enter on an empty list item |
 | Indent / outdent list item | Tab / Shift+Tab at the start of the item |
 | Bigger / smaller text | Ctrl+] / Ctrl+[ |
-| Restore the last deleted note | Ctrl+Shift+Z (with a note focused), or tray menu |
+| Open a link | Ctrl+click it |
+| Preview an image | Click it |
+| Image viewer: zoom / fit / actual size | Mouse wheel or + / - ; 0 ; 1 |
+| Image viewer: copy / save a copy / close | Ctrl+C / Ctrl+S / Esc |
 
 ## Install
 
-Download `StickyNotes-Setup-<version>.exe` from the [Releases](https://github.com/JamieAinsworth/Sticky-Notes/releases) page and run it. It installs for the current user only (no admin rights needed) into `%LOCALAPPDATA%\Programs\Sticky Notes`, adds a Start menu shortcut, and can be removed from **Settings â†’ Apps**. Uninstalling keeps your notes. The release also includes `StickyNotes-<version>-portable.exe`, a single exe you can run from anywhere without installing.
+Download `StickyNotes-Setup-<version>.exe` from the [Releases](https://github.com/JamieAinsworth/Sticky-Notes/releases) page and run it. It installs for the current user only (no admin rights needed) into `%LOCALAPPDATA%\Programs\Sticky Notes`, adds a Start menu shortcut, and can be removed from **Settings ? Apps**. Uninstalling keeps your notes. The release also includes `StickyNotes-<version>-portable.exe`, a single exe you can run from anywhere without installing.
 
-Neither download needs .NET installed. They aren't code-signed, so Windows SmartScreen may show "Windows protected your PC"; choose **More info â†’ Run anyway**.
+Neither download needs .NET installed. They aren't code-signed, so Windows SmartScreen may show "Windows protected your PC"; choose **More info ? Run anyway**.
 
 ## Build and run
 
@@ -56,7 +61,7 @@ dotnet publish src\StickyNotes -c Release -o publish
 dotnet .\publish\StickyNotes.dll
 ```
 
-The app is built without a `StickyNotes.exe` launcher (some antivirus tools flag unsigned launchers); it runs through the .NET runtime's own `dotnet.exe` instead. To start it by double-clicking, create a shortcut (right-click the desktop â†’ **New â†’ Shortcut**) with this target, adjusting the path to your `publish` folder:
+The app is built without a `StickyNotes.exe` launcher (some antivirus tools flag unsigned launchers); it runs through the .NET runtime's own `dotnet.exe` instead. To start it by double-clicking, create a shortcut (right-click the desktop ? **New ? Shortcut**) with this target, adjusting the path to your `publish` folder:
 
 ```
 "C:\Program Files\dotnet\dotnet.exe" "C:\Apps\StickyNotes\publish\StickyNotes.dll"

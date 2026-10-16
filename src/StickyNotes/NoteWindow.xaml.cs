@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Media;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -56,6 +57,11 @@ public partial class NoteWindow : Window
 
         LoadContent();
         ChecklistEditor.RefreshGlyphs(Editor.Document);
+        ImageEditor.Hydrate(Editor);
+        LinkEditor.Relink(Editor, includeCaret: true);
+        // Loading isn't something to undo; without this Ctrl+Z could strip the pictures back out.
+        Editor.IsUndoEnabled = false;
+        Editor.IsUndoEnabled = true;
         ApplyColor(NoteColors.Get(data.Color));
         ApplyPinned(data.Pinned);
         ApplyAlwaysOnTop(data.AlwaysOnTop);
@@ -63,6 +69,15 @@ public partial class NoteWindow : Window
         UpdateReminderButton();
 
         DataObject.AddPastingHandler(Editor, OnPaste);
+        // A pasted address ends at the caret; link it straight away rather than waiting for the next space.
+        DataObject.AddPastingHandler(Editor, (_, _) => _relinkIncludeCaret = true);
+        Editor.AddHandler(PreviewDragOverEvent, new DragEventHandler(Editor_PreviewDragOver), true);
+        Editor.AddHandler(PreviewDropEvent, new DragEventHandler(Editor_PreviewDrop), true);
+        Editor.SizeChanged += (_, _) => ImageEditor.FitToWidth(Editor);
+        Editor.MouseLeave += (_, _) =>
+        {
+            if (_imageOverlay is { IsResizing: false }) HideImageOverlay();
+        };
         Editor.TextChanged += Editor_TextChanged;
         Editor.SelectionChanged += (_, _) => UpdateFormatButtons();
         // Formatting commands (buttons or Ctrl+B etc.) with no selection change nothing visible yet, so refresh after them too.
@@ -93,6 +108,7 @@ public partial class NoteWindow : Window
         Deactivated += (_, _) =>
         {
             Toolbar.Visibility = Visibility.Collapsed;
+            RelinkNow(includeCaret: true);
             _alertKeepOnTop = false;
             ApplyZOrder();
             _manager.NoteDeactivated();
@@ -105,22 +121,7 @@ public partial class NoteWindow : Window
 
         PreviewMouseDown += (_, _) => DismissReminderAlert();
 
-        // Window-level so it also works from a collapsed note, where the editor can't take focus.
-        PreviewKeyDown += (_, e) =>
-        {
-            if (TryHandleUndoDeleteKey(e.Key, Keyboard.Modifiers)) e.Handled = true;
-        };
         MouseLeave += NoteWindow_MouseLeave;
-    }
-
-    /// <summary>Ctrl+Shift+Z brings back the most recently deleted note. Returns true if the key was used.</summary>
-    internal bool TryHandleUndoDeleteKey(Key key, ModifierKeys modifiers)
-    {
-        if (key != Key.Z || modifiers != (ModifierKeys.Control | ModifierKeys.Shift)) return false;
-        if (!_manager.CanUndoDelete) return false;
-
-        _manager.UndoDelete();
-        return true;
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -138,7 +139,48 @@ public partial class NoteWindow : Window
         if (progman != IntPtr.Zero)
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT, progman);
 
+        HwndSource.FromHwnd(_hwnd)?.AddHook(WndProc);
+
         ApplyZOrder();
+    }
+
+    /// <summary>Activates this note without bringing the other notes forward with it.</summary>
+    public void ActivateNote()
+    {
+        _manager.BeginActivating(this);
+        Activate();
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == NativeMethods.WM_MOUSEACTIVATE)
+        {
+            _manager.BeginActivating(this);
+        }
+        else if (msg == NativeMethods.WM_WINDOWPOSCHANGING && lParam != IntPtr.Zero)
+        {
+            var pos = Marshal.PtrToStructure<NativeMethods.WINDOWPOS>(lParam);
+            if ((pos.flags & NativeMethods.SWP_NOZORDER) == 0 && ShouldHoldZOrder(pos.hwndInsertAfter))
+            {
+                pos.flags |= NativeMethods.SWP_NOZORDER;
+                Marshal.StructureToPtr(pos, lParam, false);
+            }
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// True when this note is only being moved up because a sibling note is activating. Notes share the desktop
+    /// window as owner, so Windows would otherwise raise all of them whenever one is clicked or created.
+    /// </summary>
+    internal bool ShouldHoldZOrder(IntPtr insertAfter)
+    {
+        var activating = _manager.ActivatingNote;
+        if (activating == null || activating == this || IsActive || _manager.Raised || Topmost) return false;
+        // Sending to the bottom or changing the topmost band is our own doing; only an upward pull is held back.
+        return insertAfter != NativeMethods.HWND_BOTTOM
+            && insertAfter != NativeMethods.HWND_TOPMOST
+            && insertAfter != NativeMethods.HWND_NOTOPMOST;
     }
 
     /// <summary>Notes sit on the desktop layer unless raised by the tray/hotkey, set to stay on top, or alerting.</summary>
@@ -191,6 +233,9 @@ public partial class NoteWindow : Window
         if (!IsDeleted && !_manager.AllowClose) e.Cancel = true;
         base.OnClosing(e);
     }
+
+    /// <summary>The note's current content.</summary>
+    internal FlowDocument EditorDocument => Editor.Document;
 
     public void FocusEditor()
     {
@@ -455,7 +500,7 @@ public partial class NoteWindow : Window
         // Bring this specific note to the front, then place the glow just behind it
         ApplyZOrder();
         StartAlertGlow();
-        Activate();
+        ActivateNote();
         Focus();
 
         // Play chime sound
@@ -507,6 +552,22 @@ public partial class NoteWindow : Window
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
         _manager.RequestSave();
+        if (_imageOverlay is { IsResizing: false }) HideImageOverlay();
+        if (_relinking) return;
+        if (e.UndoAction is UndoAction.Undo or UndoAction.Redo)
+        {
+            // Changing the document now would add a new undo step, wiping the redo history and trapping Ctrl+Z
+            // (each undo would be redone straight away), so only refill images and reapply their sizes, which
+            // aren't undoable changes.
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                ImageEditor.Hydrate(Editor, repairOnly: true);
+                ImageEditor.FitToWidth(Editor);
+            });
+            return;
+        }
+        _hydrateQueued = true;
+        QueueRelink();
 
         // Text added to a ticked item should look done like the rest of it. Applied after this change completes.
         var edited = Editor.Selection.End.Paragraph;
@@ -624,6 +685,26 @@ public partial class NoteWindow : Window
 
     private void Editor_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // Clicks on the image toolbar or resize grip belong to them.
+        if (_imageOverlay?.IsMouseOverControls == true) return;
+
+        if (Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control
+            && ImageEditor.ImageAt(Editor, e.GetPosition(Editor)) is { } image)
+        {
+            OpenImageViewer(image);
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && LinkEditor.LinkAt(Editor, e.GetPosition(Editor)) is { } link
+            && LinkEditor.UriOf(link) is { } uri)
+        {
+            LinkEditor.Open(uri);
+            e.Handled = true;
+            return;
+        }
+
         var paragraph = ChecklistEditor.ParagraphAtCheckbox(Editor, e.GetPosition(Editor));
         if (paragraph == null) return;
 
@@ -634,9 +715,152 @@ public partial class NoteWindow : Window
 
     private void Editor_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        bool overCheckbox = ChecklistEditor.ParagraphAtCheckbox(Editor, e.GetPosition(Editor)) != null;
-        if (overCheckbox) Editor.Cursor = Cursors.Hand;
+        var point = e.GetPosition(Editor);
+        UpdateImageOverlay(point);
+        if (_imageOverlay?.IsMouseOverControls == true)
+        {
+            Editor.ClearValue(CursorProperty);
+            return;
+        }
+        bool overCheckbox = ChecklistEditor.ParagraphAtCheckbox(Editor, point) != null;
+        bool overImage = _imageOverlay != null && ImageEditor.ImageAt(Editor, point) != null;
+        bool overLink = Keyboard.Modifiers == ModifierKeys.Control && LinkEditor.LinkAt(Editor, point) != null;
+        if (overCheckbox || overImage || overLink) Editor.Cursor = Cursors.Hand;
         else Editor.ClearValue(CursorProperty);
+    }
+
+    // ---- Images ----
+
+    private ImageOverlay? _imageOverlay;
+
+    internal ImageOverlay? ImageOverlay => _imageOverlay;
+
+    /// <summary>Shows the outline, toolbar and resize grip on the image under the mouse, and hides them once it leaves.</summary>
+    internal void UpdateImageOverlay(Point point)
+    {
+        if (_imageOverlay is { } current && (current.IsMouseOverControls || current.IsResizing)) return;
+
+        var hit = ImageEditor.HitAt(Editor, point);
+        if (hit != null && _imageOverlay != null && _imageOverlay.AdornedElement == hit.Content && _imageOverlay.Link == hit.Link)
+            return;
+
+        HideImageOverlay();
+        if (hit == null || AdornerLayer.GetAdornerLayer(hit.Content) is not { } layer) return;
+
+        var overlay = new ImageOverlay(hit.Content, hit.Link, hit.Name)
+        {
+            MaxImageWidth = MaxWidthFor(hit.Content),
+        };
+        overlay.PreviewRequested += () => OpenImageViewer(overlay.ImageName);
+        overlay.CopyRequested += () => ImageStore.CopyToClipboard(overlay.ImageName);
+        overlay.DeleteRequested += () =>
+        {
+            HideImageOverlay();
+            ImageEditor.Remove(Editor, overlay.Link);
+            Editor.Focus();
+        };
+        overlay.Resizing += width => ((FrameworkElement)overlay.AdornedElement).Width = width;
+        overlay.Resized += width => CommitImageWidth(overlay, width);
+        layer.Add(overlay);
+        _imageOverlay = overlay;
+    }
+
+    internal void HideImageOverlay()
+    {
+        if (_imageOverlay == null) return;
+        var overlay = _imageOverlay;
+        _imageOverlay = null;
+        AdornerLayer.GetAdornerLayer(overlay.AdornedElement)?.Remove(overlay);
+    }
+
+    /// <summary>The widest an image can be shown: its own size, and never wider than the note.</summary>
+    private static double MaxWidthFor(FrameworkElement content)
+    {
+        double natural = ImageEditor.BitmapOf(content)?.Width ?? double.PositiveInfinity;
+        double note = double.IsInfinity(content.MaxWidth) ? double.PositiveInfinity : content.MaxWidth;
+        return Math.Min(natural, note);
+    }
+
+    /// <summary>Saves the width an image was dragged to; dragging it back to full size makes it fit the note again.</summary>
+    private void CommitImageWidth(ImageOverlay overlay, double width)
+    {
+        double? chosen = width >= overlay.MaxImageWidth - 1 ? null : width;
+        ImageEditor.SetWidth(Editor, overlay.Link, chosen);
+        ImageEditor.FitToWidth(Editor);
+    }
+
+    internal void OpenImageViewer(string name)
+    {
+        HideImageOverlay();
+        ImageViewerWindow.Open(name, this);
+    }
+
+    private bool _relinking;
+    private bool _relinkQueued;
+    private bool _relinkIncludeCaret;
+    private bool _hydrateQueued;
+
+    /// <summary>Updates the note's links and images once the current edit has finished.</summary>
+    private void QueueRelink()
+    {
+        if (_relinkQueued) return;
+        _relinkQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => RelinkNow(_relinkIncludeCaret));
+    }
+
+    internal void RelinkNow(bool includeCaret)
+    {
+        _relinkQueued = false;
+        _relinkIncludeCaret = false;
+        bool hydrate = _hydrateQueued;
+        _hydrateQueued = false;
+        if (_relinking) return;
+        _relinking = true;
+        try
+        {
+            if (hydrate) ImageEditor.Hydrate(Editor);
+            LinkEditor.Relink(Editor, includeCaret);
+        }
+        finally
+        {
+            _relinking = false;
+        }
+    }
+
+    /// <summary>Puts images at the caret (replacing any selection) as one undoable change.</summary>
+    internal void InsertImages(IEnumerable<string> names)
+    {
+        Editor.BeginChange();
+        try
+        {
+            foreach (var name in names) ImageEditor.Insert(Editor, name);
+        }
+        finally
+        {
+            Editor.EndChange();
+        }
+        Editor.Focus();
+    }
+
+    private void Editor_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        if (ImageEditor.ImageFilesIn(e.Data).Count == 0) return;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void Editor_PreviewDrop(object sender, DragEventArgs e)
+    {
+        var files = ImageEditor.ImageFilesIn(e.Data);
+        if (files.Count == 0) return;
+        e.Handled = true;
+
+        var names = files.Select(ImageStore.Import).OfType<string>().ToList();
+        if (names.Count == 0) return;
+        var position = Editor.GetPositionFromPoint(e.GetPosition(Editor), snapToText: true);
+        if (position != null) Editor.Selection.Select(position, position);
+        Activate();
+        InsertImages(names);
     }
 
     /// <summary>Typing "[] " turns the line into a checklist item, or adds a checkbox to a bullet or numbered item.</summary>
@@ -768,21 +992,79 @@ public partial class NoteWindow : Window
 
     private static void SetActive(Button button, bool active) => button.Tag = active ? "Active" : null;
 
-    private static void OnPaste(object sender, DataObjectPastingEventArgs e)
+    private void OnPaste(object sender, DataObjectPastingEventArgs e)
     {
-        // Keep rich content copied between notes; paste anything else as plain text so the note stays tidy.
-        if (e.DataObject.GetDataPresent(DataFormats.Xaml) || e.DataObject.GetDataPresent(DataFormats.XamlPackage))
-            return;
+        var data = e.DataObject;
 
-        if (e.DataObject.GetData(DataFormats.UnicodeText) is string text)
+        // Content copied from a note. If it has images, paste it ourselves so they come back in the same undo step.
+        if (data.GetDataPresent(DataFormats.Xaml) || data.GetDataPresent(DataFormats.XamlPackage))
+        {
+            if (!e.IsDragDrop && data.GetData(DataFormats.Xaml) is string xaml && ImageEditor.UriPattern.IsMatch(xaml))
+            {
+                e.CancelCommand();
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, () => PasteNoteContent(xaml));
+            }
+            else if (data.GetDataPresent(DataFormats.Xaml))
+            {
+                // WPF's own image format would bring in a copy of the picture rather than the note's file.
+                e.FormatToApply = DataFormats.Xaml;
+            }
+            return;
+        }
+
+        var files = ImageEditor.ImageFilesIn(data);
+        if (files.Count > 0)
+        {
+            e.CancelCommand();
+            var names = files.Select(ImageStore.Import).OfType<string>().ToList();
+            if (names.Count > 0) Dispatcher.BeginInvoke(DispatcherPriority.Input, () => InsertImages(names));
+            return;
+        }
+
+        // Paste anything else as plain text so the note stays tidy.
+        if (data.GetData(DataFormats.UnicodeText) is string text)
         {
             var plain = new DataObject();
             plain.SetData(DataFormats.UnicodeText, text);
             e.DataObject = plain;
+            return;
         }
-        else
+
+        e.CancelCommand();
+        if (ImageEditor.ImageFrom(data) is { } bitmap)
         {
-            e.CancelCommand();
+            string name;
+            try
+            {
+                name = ImageStore.Save(bitmap);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                return;
+            }
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => InsertImages(new[] { name }));
+        }
+    }
+
+    private void PasteNoteContent(string xaml)
+    {
+        Editor.BeginChange();
+        try
+        {
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xaml));
+            Editor.Selection.Load(stream, DataFormats.Xaml);
+            ImageEditor.Hydrate(Editor);
+            ChecklistEditor.RefreshGlyphs(Editor.Document);
+            Editor.Selection.Select(Editor.Selection.End, Editor.Selection.End);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Xml.XmlException
+                                       or System.Windows.Markup.XamlParseException)
+        {
+            // Unreadable clipboard content; leave the note as it was.
+        }
+        finally
+        {
+            Editor.EndChange();
         }
     }
 }
