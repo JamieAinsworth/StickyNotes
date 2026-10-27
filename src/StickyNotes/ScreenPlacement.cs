@@ -53,4 +53,46 @@ internal static class ScreenPlacement
         y = Math.Max(workArea.Top, Math.Min(y, workArea.Bottom - height));
         return (x, y);
     }
+
+    public static (PixelRect Bounds, bool Vertical) PlaceToolbar(PixelRect note, IReadOnlyList<PixelRect> workAreas,
+        int horizontalWidth, int horizontalHeight, int verticalWidth, int verticalHeight, int gap)
+    {
+        var areas = workAreas.OrderByDescending(area =>
+        {
+            var overlap = note.Intersect(area);
+            return (long)overlap.Width * overlap.Height;
+        }).ToArray();
+        if (areas.Length == 0)
+            return (new PixelRect(note.Left, note.Bottom + gap, note.Left + horizontalWidth, note.Bottom + gap + horizontalHeight), false);
+
+        foreach (var area in areas)
+        {
+            for (int side = 0; side < 4; side++)
+            {
+                bool vertical = side is 1 or 2;
+                int width = vertical ? verticalWidth : horizontalWidth;
+                int height = vertical ? verticalHeight : horizontalHeight;
+                if (width > area.Width || height > area.Height) continue;
+                int x = Math.Clamp(note.Left, area.Left, area.Right - width);
+                int y = Math.Clamp(note.Top, area.Top, area.Bottom - height);
+                if (side == 0) y = note.Bottom + gap;
+                else if (side == 1) x = note.Right + gap;
+                else if (side == 2) x = note.Left - gap - width;
+                else y = note.Top - gap - height;
+
+                var bounds = new PixelRect(x, y, x + width, y + height);
+                if (bounds.Left >= area.Left && bounds.Top >= area.Top
+                    && bounds.Right <= area.Right && bounds.Bottom <= area.Bottom)
+                    return (bounds, vertical);
+            }
+        }
+
+        var fallback = areas[0];
+        bool useVertical = horizontalWidth > fallback.Width || horizontalHeight > fallback.Height;
+        int fallbackWidth = useVertical ? verticalWidth : horizontalWidth;
+        int fallbackHeight = useVertical ? verticalHeight : horizontalHeight;
+        int left = Math.Clamp(note.Left, fallback.Left, Math.Max(fallback.Left, fallback.Right - fallbackWidth));
+        int top = Math.Clamp(note.Bottom + gap, fallback.Top, Math.Max(fallback.Top, fallback.Bottom - fallbackHeight));
+        return (new PixelRect(left, top, left + fallbackWidth, top + fallbackHeight), useVertical);
+    }
 }

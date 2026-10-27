@@ -243,7 +243,31 @@ internal static class ImageEditor
     /// <summary>The image files used in a document, in order.</summary>
     public static IEnumerable<string> NamesIn(FlowDocument document) => ImageLinks(document).Select(l => l.Name);
 
-    /// <summary>An image from the clipboard or a drag, if the data holds one.</summary>
+    /// <summary>The original web GIF referenced by a browser image clipboard, if any.</summary>
+    public static Uri? GifSourceFrom(IDataObject data)
+    {
+        try
+        {
+            if (!data.GetDataPresent("PNG") && !data.GetDataPresent(DataFormats.Bitmap)) return null;
+            if (data.GetData(DataFormats.Html) is not string html || html.Length > 1024 * 1024) return null;
+
+            var document = new HtmlAgilityPack.HtmlDocument();
+            document.LoadHtml(html);
+            var images = document.DocumentNode.SelectNodes("//img[@src]");
+            if (images?.Count != 1) return null;
+            var source = System.Net.WebUtility.HtmlDecode(images[0].GetAttributeValue("src", string.Empty));
+            if (Uri.TryCreate(source, UriKind.Absolute, out var uri)
+                && uri.Scheme is "https" or "http"
+                && uri.UserInfo.Length == 0
+                && !uri.IsLoopback
+                && uri.AbsolutePath.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)) return uri;
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+        }
+        return null;
+    }
+
     public static BitmapSource? ImageFrom(IDataObject data)
     {
         try
@@ -282,7 +306,14 @@ internal static class ImageEditor
         var bitmap = ImageStore.Load(name);
         if (bitmap != null)
         {
-            content = new Image { Source = bitmap, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly };
+            bool animated = name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
+            Image image = animated ? new AnimatedNoteImage() : new Image();
+            image.Source = bitmap;
+            image.Stretch = Stretch.Uniform;
+            image.StretchDirection = StretchDirection.Both;
+            if (animated)
+                WpfAnimatedGif.ImageBehavior.SetAnimatedSource(image, bitmap);
+            content = image;
             RenderOptions.SetBitmapScalingMode(content, BitmapScalingMode.HighQuality);
         }
         else
@@ -370,4 +401,12 @@ internal static class ImageEditor
                     yield return nested;
         }
     }
+}
+
+public sealed class AnimatedNoteImage : Image
+{
+    protected override bool ShouldSerializeProperty(DependencyProperty dependencyProperty) =>
+        dependencyProperty != SourceProperty
+        && dependencyProperty.OwnerType != typeof(WpfAnimatedGif.ImageBehavior)
+        && base.ShouldSerializeProperty(dependencyProperty);
 }

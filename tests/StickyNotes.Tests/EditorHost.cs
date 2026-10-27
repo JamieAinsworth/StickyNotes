@@ -26,6 +26,7 @@ internal sealed class EditorHost : IDisposable
     {
         Editor = new RichTextBox
         {
+            AcceptsTab = true,
             Width = 300,
             Height = 220,
             FontFamily = new FontFamily("Segoe UI"),

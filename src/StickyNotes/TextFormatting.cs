@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Documents;
 
 namespace StickyNotes;
@@ -8,6 +9,16 @@ namespace StickyNotes;
 /// <summary>Text formatting helpers shared by the editor's shortcuts and checklists.</summary>
 internal static class TextFormatting
 {
+    public static bool ChangeListIndentation(RichTextBox editor, bool outdent)
+    {
+        if (editor.Selection.Start.Paragraph?.Parent is not ListItem
+            || editor.Selection.End.Paragraph?.Parent is not ListItem) return false;
+
+        var command = outdent ? EditingCommands.DecreaseIndentation : EditingCommands.IncreaseIndentation;
+        if (command.CanExecute(null, editor)) command.Execute(null, editor);
+        return true;
+    }
+
     /// <summary>
     /// Adds or removes strikethrough run by run. Decorations can differ from word to word (one word underlined,
     /// say), so each run keeps its own other decorations instead of being overwritten with one shared set.

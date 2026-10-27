@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -21,6 +22,45 @@ public class ZOrderTests
         for (var h = GetWindow(lower, GW_HWNDPREV); h != IntPtr.Zero; h = GetWindow(h, GW_HWNDPREV))
             if (h == upper) return true;
         return false;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Hovering_a_collapsed_note_overlays_other_notes_without_activating_it(bool alwaysOnTop)
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var note = scope.CreateNote("collapsed");
+            var other = scope.CreateNote("other");
+            UiThread.Pump();
+
+            const BindingFlags nonPublic = BindingFlags.NonPublic | BindingFlags.Instance;
+            typeof(NoteWindow).GetMethod("ApplyAlwaysOnTop", nonPublic)!.Invoke(note, new object[] { alwaysOnTop });
+            typeof(NoteWindow).GetMethod("ApplyAlwaysOnTop", nonPublic)!.Invoke(other, new object[] { alwaysOnTop });
+            typeof(NoteWindow).GetMethod("ApplyCollapsed", nonPublic)!.Invoke(note, new object[] { true, true });
+            NativeMethods.SetWindowPos(Hwnd(other), alwaysOnTop ? NativeMethods.HWND_TOPMOST : IntPtr.Zero, 0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+            Assert.True(IsAbove(Hwnd(other), Hwnd(note)));
+            bool wasActive = note.IsActive;
+
+            typeof(NoteWindow).GetMethod("Header_MouseEnter", nonPublic)!.Invoke(note, new object?[] { null, null });
+
+            Assert.False(note.IsEffectivelyCollapsed);
+            Assert.True(IsAbove(Hwnd(note), Hwnd(other)));
+            Assert.Equal(wasActive, note.IsActive);
+            Assert.True(note.Data.IsCollapsed);
+            Assert.Equal(alwaysOnTop, note.Data.AlwaysOnTop);
+
+            note.Left = -5000;
+            typeof(NoteWindow).GetMethod("CollapseIfCursorLeft", nonPublic)!.Invoke(note, null);
+
+            Assert.True(note.IsEffectivelyCollapsed);
+            UiThread.Wait(300);
+            Assert.Equal(alwaysOnTop, note.Topmost);
+            if (!alwaysOnTop) Assert.True(IsAbove(Hwnd(other), Hwnd(note)));
+        });
     }
 
     [Fact]

@@ -111,6 +111,11 @@ internal sealed class ImageViewerWindow : Window
         _missing = (FrameworkElement)root.FindName("Missing");
         _zoomText = (TextBlock)root.FindName("ZoomText");
         _picture.RenderTransform = new TransformGroup { Children = { _scaleTransform, _translateTransform } };
+        WpfAnimatedGif.ImageBehavior.AddAnimationLoadedHandler(_picture, (_, _) =>
+        {
+            if (_picture.Source is BitmapSource frame) UpdatePictureSize(frame);
+            FitToWindow();
+        });
 
         ((Button)root.FindName("ZoomOutButton")).Click += (_, _) => ZoomAt(Centre, _scale / ZoomStep);
         ((Button)root.FindName("ZoomInButton")).Click += (_, _) => ZoomAt(Centre, _scale * ZoomStep);
@@ -183,20 +188,28 @@ internal sealed class ImageViewerWindow : Window
     {
         _name = name;
         var bitmap = ImageStore.LoadFull(name);
+        WpfAnimatedGif.ImageBehavior.SetAnimatedSource(_picture, null);
         _picture.Source = bitmap;
         _missing.Visibility = bitmap == null ? Visibility.Visible : Visibility.Collapsed;
         if (bitmap != null)
         {
-            _picture.Width = bitmap.Width;
-            _picture.Height = bitmap.Height;
-            Title = $"Image ({bitmap.PixelWidth} × {bitmap.PixelHeight}) - Sticky Notes";
+            UpdatePictureSize(bitmap);
         }
         else
         {
             Title = "Image - Sticky Notes";
         }
+        if (bitmap != null && name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+            WpfAnimatedGif.ImageBehavior.SetAnimatedSource(_picture, bitmap);
         UpdateLayout();
         FitToWindow();
+    }
+
+    private void UpdatePictureSize(BitmapSource bitmap)
+    {
+        _picture.Width = bitmap.Width;
+        _picture.Height = bitmap.Height;
+        Title = $"Image ({bitmap.PixelWidth} × {bitmap.PixelHeight}) - Sticky Notes";
     }
 
     private Point Centre => new(_surface.ActualWidth / 2, _surface.ActualHeight / 2);

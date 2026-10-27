@@ -19,6 +19,9 @@ internal static class NativeMethods
 
     public const int WM_MOUSEACTIVATE = 0x0021;
     public const int WM_WINDOWPOSCHANGING = 0x0046;
+    public const int WM_DISPLAYCHANGE = 0x007E;
+    public const int WM_SETTINGCHANGE = 0x001A;
+    public const int WM_DPICHANGED = 0x02E0;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct WINDOWPOS

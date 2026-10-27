@@ -94,7 +94,7 @@ internal sealed class ImageOverlay : Adorner
 
     public string ImageName { get; }
 
-    /// <summary>The widest the image may be made: its own size or the note's width, whichever is smaller.</summary>
+    /// <summary>The widest the image may be made within the note.</summary>
     public double MaxImageWidth { get; set; } = double.PositiveInfinity;
 
     public bool IsResizing { get; private set; }

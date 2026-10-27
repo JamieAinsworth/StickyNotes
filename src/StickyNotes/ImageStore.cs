@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 
 namespace StickyNotes;
@@ -37,6 +40,8 @@ internal static class ImageStore
     };
 
     private static readonly Dictionary<string, BitmapSource> Cache = new();
+    private static readonly HttpClient Http = new();
+    private const int MaxGifBytes = 20 * 1024 * 1024;
 
     public static string Folder => FolderIn(AppSettings.Current.ResolvedDataFolder);
 
@@ -77,6 +82,40 @@ internal static class ImageStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException
                                        or ArgumentException or FileFormatException)
+        {
+            return null;
+        }
+    }
+
+    internal static async Task<string?> DownloadGifAsync(Uri uri, HttpClient? client = null, CancellationToken cancellationToken = default)
+    {
+        if (uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.IsLoopback) return null;
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var response = await (client ?? Http).GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > MaxGifBytes) return null;
+            using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var bytes = new MemoryStream();
+            var buffer = new byte[81920];
+            int count;
+            while ((count = await stream.ReadAsync(buffer, timeout.Token)) > 0)
+            {
+                if (bytes.Length + count > MaxGifBytes) return null;
+                bytes.Write(buffer, 0, count);
+            }
+            bytes.Position = 0;
+            if (BitmapDecoder.Create(bytes, BitmapCreateOptions.None, BitmapCacheOption.OnLoad) is not GifBitmapDecoder) return null;
+
+            var name = NewName(".gif");
+            Directory.CreateDirectory(Folder);
+            await File.WriteAllBytesAsync(Path.Combine(Folder, name), bytes.ToArray(), timeout.Token);
+            return name;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException
+                                       or UnauthorizedAccessException or NotSupportedException or ArgumentException
+                                       or FileFormatException or InvalidOperationException)
         {
             return null;
         }
@@ -137,18 +176,9 @@ internal static class ImageStore
     /// <summary>Puts the image on the clipboard. Returns false if it couldn't be read or the clipboard was busy.</summary>
     public static bool CopyToClipboard(string name)
     {
-        if (LoadFull(name) is not { } bitmap) return false;
+        if (CreateClipboardData(name) is not { } data) return false;
         try
         {
-            // Plain bitmap for most apps, plus PNG so apps that read it (and notes) keep transparency.
-            var data = new System.Windows.DataObject();
-            data.SetImage(bitmap);
-            var png = new MemoryStream();
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(bitmap));
-            encoder.Save(png);
-            png.Position = 0;
-            data.SetData("PNG", png);
             System.Windows.Clipboard.SetDataObject(data, copy: true);
             return true;
         }
@@ -156,6 +186,22 @@ internal static class ImageStore
         {
             return false;
         }
+    }
+
+    internal static System.Windows.DataObject? CreateClipboardData(string name)
+    {
+        if (LoadFull(name) is not { } bitmap) return null;
+        var data = new System.Windows.DataObject();
+        data.SetImage(bitmap);
+        var png = new MemoryStream();
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        encoder.Save(png);
+        png.Position = 0;
+        data.SetData("PNG", png);
+        if (name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
+            data.SetFileDropList(new System.Collections.Specialized.StringCollection { Path.Combine(Folder, name) });
+        return data;
     }
 
     /// <summary>Image file names referred to in some saved note content.</summary>
