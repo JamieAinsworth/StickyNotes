@@ -11,7 +11,7 @@
     <AssemblyName>StickyNotes</AssemblyName>
     <RootNamespace>StickyNotes</RootNamespace>
     <Product>Sticky Notes</Product>
-    <Version>1.1.2</Version>
+    <Version>1.2.0</Version>
     <ApplicationIcon>Assets\StickyNotes.ico</ApplicationIcon>
     <!-- WPF owns the process, so per-monitor DPI is declared in app.manifest. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
@@ -23,7 +23,7 @@
 
   <ItemGroup>
     <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
-    <PackageReference Include="WpfAnimatedGif" Version="2.0.2" />
+    <PackageReference Include="XamlAnimatedGif" Version="2.3.2" />
     <InternalsVisibleTo Include="StickyNotes.Tests" />
   </ItemGroup>
 

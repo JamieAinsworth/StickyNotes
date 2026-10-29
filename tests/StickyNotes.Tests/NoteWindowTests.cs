@@ -186,6 +186,70 @@ public class NoteWindowTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void Formatting_toolbar_scales_with_small_notes_and_restores_its_normal_size(bool sideMounted)
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var note = scope.CreateNote("text");
+            var source = Assert.IsType<HwndSource>(PresentationSource.FromVisual(note));
+            var area = PixelRect.From(System.Windows.Forms.Screen.FromHandle(source.Handle).WorkingArea);
+            var dpi = VisualTreeHelper.GetDpi(note);
+            note.Left = area.Left / dpi.DpiScaleX + 80;
+            note.ActivateNote();
+            note.FocusEditor();
+            var toolbar = (Border)note.FindName("Toolbar");
+            var popup = (Popup)note.FindName("FormattingPopup");
+            double previousScale = 0;
+
+            foreach (double progress in new[] { 0.0, 0.5, 1.0 })
+            {
+                note.Width = note.MinWidth + (280 - note.MinWidth) * progress;
+                note.Height = note.MinHeight + (280 - note.MinHeight) * progress;
+                note.Top = sideMounted ? area.Bottom / dpi.DpiScaleY - note.Height : area.Top / dpi.DpiScaleY + 40;
+                UiThread.Pump();
+                note.UpdateLayout();
+                UiThread.WaitUntil(() =>
+                {
+                    if (!note.IsActive) note.ActivateNote();
+                    return popup.IsOpen && PresentationSource.FromVisual(toolbar) != null;
+                });
+
+                Assert.Equal(sideMounted ? Orientation.Vertical : Orientation.Horizontal,
+                    ((StackPanel)note.FindName("FormattingButtons")).Orientation);
+                double scale = toolbar.LayoutTransform.Value.M11;
+                Assert.InRange(scale, previousScale, 1);
+                if (progress == 0) Assert.True(scale < 1);
+                if (progress == 1) Assert.Equal(1, scale);
+                previousScale = scale;
+                Assert.True(sideMounted ? popup.Height <= note.ActualHeight : popup.Width <= note.ActualWidth);
+
+                var popupSource = Assert.IsType<HwndSource>(PresentationSource.FromVisual(toolbar));
+                Assert.True(NativeMethods.GetWindowRect(popupSource.Handle, out var popupBounds));
+                var buttons = ((StackPanel)note.FindName("FormattingButtons")).Children.OfType<Button>().ToList();
+                Assert.Equal(7, buttons.Count);
+                foreach (var button in buttons)
+                {
+                    Assert.True(button.IsVisible);
+                    var topLeft = button.PointToScreen(new Point());
+                    var bottomRight = button.PointToScreen(new Point(button.ActualWidth, button.ActualHeight));
+                    Assert.True(topLeft.X >= popupBounds.Left && topLeft.Y >= popupBounds.Top
+                        && bottomRight.X <= popupBounds.Right && bottomRight.Y <= popupBounds.Bottom,
+                        $"{button.Name} bounds {topLeft} to {bottomRight} outside popup {popupBounds.Left},{popupBounds.Top},{popupBounds.Right},{popupBounds.Bottom}");
+                }
+
+                var editor = ManagerScope.EditorOf(note);
+                editor.SelectAll();
+                var bold = (Button)note.FindName("BoldButton");
+                ((RoutedCommand)bold.Command).Execute(null, bold.CommandTarget);
+                Assert.True(editor.IsKeyboardFocusWithin);
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void Formatting_toolbar_tracks_each_note_move_without_waiting_for_another_render(bool sideMounted)
     {
         UiThread.Run(() =>

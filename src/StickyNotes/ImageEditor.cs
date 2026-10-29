@@ -3,11 +3,14 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 
 namespace StickyNotes;
 
@@ -22,7 +25,7 @@ internal static class ImageEditor
 {
     public const string Scheme = "stickynotes-image";
 
-    public const string ToolTipText = "Click to preview";
+    public const string ToolTipText = "Double-click to preview";
 
     public static readonly Regex UriPattern = new(Scheme + @":///([\w.-]+)", RegexOptions.Compiled);
 
@@ -59,6 +62,21 @@ internal static class ImageEditor
     }
 
     public static bool IsImageLink(Hyperlink link) => NameOf(link) != null;
+
+    public static void AddClipboardFormats(RichTextBox editor, IDataObject data)
+    {
+        if (editor.Selection.IsEmpty) return;
+        foreach (var (link, name) in ImageLinks(editor.Document))
+        {
+            var range = new TextRange(link.ElementStart, link.ElementEnd);
+            if (editor.Selection.Start.CompareTo(range.Start) != 0
+                || editor.Selection.End.CompareTo(range.End) != 0) continue;
+            if (ImageStore.CreateClipboardData(name) is not { } imageData) return;
+            foreach (var format in imageData.GetFormats(autoConvert: false))
+                data.SetData(format, imageData.GetData(format));
+            return;
+        }
+    }
 
     /// <summary>Inserts an image at the caret, replacing any selected text, and puts the caret after it.</summary>
     public static Hyperlink Insert(RichTextBox editor, string name)
@@ -188,6 +206,22 @@ internal static class ImageEditor
     /// <summary>The image file under <paramref name="point"/> (relative to the editor), if any.</summary>
     public static string? ImageAt(RichTextBox editor, Point point) => HitAt(editor, point)?.Name;
 
+    public static Rect? ScreenBoundsOf(RichTextBox editor, string name)
+    {
+        foreach (var (link, imageName) in ImageLinks(editor.Document))
+        {
+            if (imageName != name || link.Inlines.FirstInline is not InlineUIContainer { Child: FrameworkElement content }
+                || !content.IsVisible || content.ActualWidth <= 0 || content.ActualHeight <= 0) continue;
+            var bounds = new Rect(content.PointToScreen(new Point()),
+                content.PointToScreen(new Point(content.ActualWidth, content.ActualHeight)));
+            var viewport = new Rect(editor.PointToScreen(new Point()),
+                editor.PointToScreen(new Point(editor.ActualWidth, editor.ActualHeight)));
+            bounds.Intersect(viewport);
+            if (!bounds.IsEmpty && bounds.Width > 0 && bounds.Height > 0) return bounds;
+        }
+        return null;
+    }
+
     /// <summary>
     /// Sets the width an image is shown at (null to fit the note) as one undoable change. WPF's undo doesn't record
     /// changes to a link's address, so the image's link is swapped for a new one instead.
@@ -303,17 +337,13 @@ internal static class ImageEditor
     private static FrameworkElement CreateContent(string name)
     {
         FrameworkElement content;
-        var bitmap = ImageStore.Load(name);
-        if (bitmap != null)
+        if (name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase))
         {
-            bool animated = name.EndsWith(".gif", StringComparison.OrdinalIgnoreCase);
-            Image image = animated ? new AnimatedNoteImage() : new Image();
-            image.Source = bitmap;
-            image.Stretch = Stretch.Uniform;
-            image.StretchDirection = StretchDirection.Both;
-            if (animated)
-                WpfAnimatedGif.ImageBehavior.SetAnimatedSource(image, bitmap);
-            content = image;
+            content = new AnimatedNoteImage { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.Both };
+        }
+        else if (ImageStore.Load(name) is { } bitmap)
+        {
+            content = new Image { Source = bitmap, Stretch = Stretch.Uniform, StretchDirection = StretchDirection.Both };
             RenderOptions.SetBitmapScalingMode(content, BitmapScalingMode.HighQuality);
         }
         else
@@ -329,6 +359,22 @@ internal static class ImageEditor
         content.ToolTip = ToolTipText;
         ToolTipService.SetShowOnDisabled(content, true);
         return content;
+    }
+
+    internal static ImageSource MissingImageSource()
+    {
+        var text = new FormattedText("Image not found", CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(SystemFonts.MessageFontFamily, FontStyles.Italic, FontWeights.Normal, FontStretches.Normal),
+            SystemFonts.MessageFontSize, Brushes.DimGray, 1);
+        var drawing = new DrawingGroup();
+        using (var context = drawing.Open())
+        {
+            context.DrawRectangle(new SolidColorBrush(Color.FromArgb(0x18, 0, 0, 0)), null,
+                new Rect(0, 0, text.Width + 12, text.Height + 4));
+            context.DrawText(text, new Point(6, 2));
+        }
+        drawing.Freeze();
+        return new DrawingImage(drawing);
     }
 
     private static void Style(Hyperlink link, string name)
@@ -405,8 +451,86 @@ internal static class ImageEditor
 
 public sealed class AnimatedNoteImage : Image
 {
+    private CancellationTokenSource? _loading;
+    private readonly GifPlayback _playback;
+    private BitmapSource? _preview;
+
+    public AnimatedNoteImage()
+    {
+        _playback = new GifPlayback(this);
+        Loaded += (_, _) => _ = LoadAsync();
+        Unloaded += (_, _) => Stop();
+        IsVisibleChanged += (_, _) =>
+        {
+            var animator = XamlAnimatedGif.AnimationBehavior.GetAnimator(this);
+            if (!IsVisible) animator?.Pause();
+            else if (animator is { IsComplete: false }) animator.Play();
+        };
+        XamlAnimatedGif.AnimationBehavior.AddLoadedHandler(this, (_, _) =>
+        {
+            var animator = XamlAnimatedGif.AnimationBehavior.GetAnimator(this);
+            if (animator == null) return;
+            var animated = Source;
+            Source = _preview ?? animated;
+            XamlAnimatedGif.AnimationBehavior.SetAutoStart(this, IsVisible);
+            EventHandler? firstFrame = null;
+            firstFrame = (_, _) =>
+            {
+                animator.CurrentFrameChanged -= firstFrame;
+                if (IsLoaded && ReferenceEquals(animator, XamlAnimatedGif.AnimationBehavior.GetAnimator(this)))
+                    Source = animated;
+            };
+            animator.CurrentFrameChanged += firstFrame;
+        });
+        XamlAnimatedGif.AnimationBehavior.AddErrorHandler(this, (_, _) =>
+        {
+            Stop();
+            Source = _preview ?? ImageEditor.MissingImageSource();
+            ToolTip = "Image not found";
+        });
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_loading != null || _playback.IsActive || Tag is not string name) return;
+        var loading = new CancellationTokenSource();
+        _loading = loading;
+        try
+        {
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            loading.Token.ThrowIfCancellationRequested();
+            var data = await ImageStore.LoadGifAsync(name, loading.Token);
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            if (loading.IsCancellationRequested || !IsLoaded || !ReferenceEquals(_loading, loading)) return;
+            if (data == null)
+            {
+                Source = ImageEditor.MissingImageSource();
+                ToolTip = "Image not found";
+                return;
+            }
+            _preview = data.Preview;
+            Source = _preview;
+            _playback.Start(data);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_loading, loading)) _loading = null;
+            loading.Dispose();
+        }
+    }
+
+    private void Stop()
+    {
+        _loading?.Cancel();
+        _loading = null;
+        _playback.Stop();
+    }
+
     protected override bool ShouldSerializeProperty(DependencyProperty dependencyProperty) =>
         dependencyProperty != SourceProperty
-        && dependencyProperty.OwnerType != typeof(WpfAnimatedGif.ImageBehavior)
+        && dependencyProperty.OwnerType != typeof(XamlAnimatedGif.AnimationBehavior)
         && base.ShouldSerializeProperty(dependencyProperty);
 }

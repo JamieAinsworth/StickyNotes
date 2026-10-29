@@ -80,6 +80,10 @@ public partial class NoteWindow : Window
         UpdateReminderButton();
 
         DataObject.AddPastingHandler(Editor, OnPaste);
+        DataObject.AddCopyingHandler(Editor, (_, e) =>
+        {
+            if (!e.IsDragDrop) ImageEditor.AddClipboardFormats(Editor, e.DataObject);
+        });
         // A pasted address ends at the caret; link it straight away rather than waiting for the next space.
         DataObject.AddPastingHandler(Editor, (_, _) => _relinkIncludeCaret = true);
         Editor.AddHandler(PreviewDragOverEvent, new DragEventHandler(Editor_PreviewDragOver), true);
@@ -186,20 +190,24 @@ public partial class NoteWindow : Window
 
         var horizontal = MeasureFormattingToolbar(Orientation.Horizontal);
         var vertical = MeasureFormattingToolbar(Orientation.Vertical);
+        double horizontalScale = Math.Min(1, ActualWidth / horizontal.Width);
+        double verticalScale = Math.Min(1, ActualHeight / vertical.Height);
         var dpi = VisualTreeHelper.GetDpi(this);
         var areas = System.Windows.Forms.Screen.AllScreens.Select(screen => PixelRect.From(screen.WorkingArea)).ToArray();
         var placement = ScreenPlacement.PlaceToolbar(new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom), areas,
-            (int)Math.Ceiling(horizontal.Width * dpi.DpiScaleX), (int)Math.Ceiling(horizontal.Height * dpi.DpiScaleY),
-            (int)Math.Ceiling(vertical.Width * dpi.DpiScaleX), (int)Math.Ceiling(vertical.Height * dpi.DpiScaleY),
+            (int)Math.Ceiling(horizontal.Width * horizontalScale * dpi.DpiScaleX), (int)Math.Ceiling(horizontal.Height * horizontalScale * dpi.DpiScaleY),
+            (int)Math.Ceiling(vertical.Width * verticalScale * dpi.DpiScaleX), (int)Math.Ceiling(vertical.Height * verticalScale * dpi.DpiScaleY),
             (int)Math.Ceiling(4 * dpi.DpiScaleY));
         var size = placement.Vertical ? vertical : horizontal;
+        double scale = placement.Vertical ? verticalScale : horizontalScale;
         FormattingButtons.Orientation = placement.Vertical ? Orientation.Vertical : Orientation.Horizontal;
         FormattingSeparator.Width = placement.Vertical ? double.NaN : 1;
         FormattingSeparator.Height = placement.Vertical ? 1 : double.NaN;
+        Toolbar.LayoutTransform = new ScaleTransform(scale, scale);
         Toolbar.Width = size.Width;
         Toolbar.Height = size.Height;
-        FormattingPopup.Width = size.Width;
-        FormattingPopup.Height = size.Height;
+        FormattingPopup.Width = size.Width * scale;
+        FormattingPopup.Height = size.Height * scale;
         var origin = OuterBorder.PointToScreen(new Point());
         FormattingPopup.HorizontalOffset = (placement.Bounds.Left - origin.X) / dpi.DpiScaleX;
         FormattingPopup.VerticalOffset = (placement.Bounds.Top - origin.Y) / dpi.DpiScaleY;
@@ -923,9 +931,8 @@ public partial class NoteWindow : Window
         if (_imageOverlay?.IsMouseOverControls == true) return;
 
         if (Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control
-            && ImageEditor.ImageAt(Editor, e.GetPosition(Editor)) is { } image)
+            && HandleImageClick(e.GetPosition(Editor), MouseButton.Left, e.ClickCount))
         {
-            OpenImageViewer(image);
             e.Handled = true;
             return;
         }
@@ -945,6 +952,23 @@ public partial class NoteWindow : Window
         ChecklistEditor.ToggleDone(Editor, paragraph);
         Editor.Focus();
         e.Handled = true;
+    }
+
+    private void Editor_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        HandleImageClick(e.GetPosition(Editor), MouseButton.Right, e.ClickCount);
+    }
+
+    internal bool HandleImageClick(Point point, MouseButton button, int clickCount)
+    {
+        if (_imageOverlay?.IsMouseOverControls == true) return false;
+        var hit = ImageEditor.HitAt(Editor, point);
+        if (hit == null) return false;
+
+        Editor.Focus();
+        Editor.Selection.Select(hit.Link.ElementStart, hit.Link.ElementEnd);
+        if (button == MouseButton.Left && clickCount == 2) OpenImageViewer(hit.Name);
+        return true;
     }
 
     private void Editor_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -1021,6 +1045,8 @@ public partial class NoteWindow : Window
         HideImageOverlay();
         ImageViewerWindow.Open(name, this);
     }
+
+    internal Rect? ImageBoundsOnScreen(string name) => ImageEditor.ScreenBoundsOf(Editor, name);
 
     private bool _relinking;
     private bool _relinkQueued;

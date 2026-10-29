@@ -205,6 +205,7 @@
                          PreviewKeyDown="Editor_PreviewKeyDown"
                          PreviewTextInput="Editor_PreviewTextInput"
                          PreviewMouseLeftButtonDown="Editor_PreviewMouseLeftButtonDown"
+                         PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"
                          PreviewMouseMove="Editor_PreviewMouseMove">
                 <RichTextBox.Resources>
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource PillScrollBar}" />

@@ -15,12 +15,15 @@ A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
 - **Colour** picker (yellow, orange, pink, purple, blue, green, grey).
 - Text wraps to the note width and scrolls when it overflows.
 - Images can be enlarged beyond their original size up to the note's available width. The chosen size is saved and restored with the note.
+- GIFs inside notes load asynchronously after the note appears, with file reads, preview decoding, and animation preparation moved off the startup path. Closing or removing an image cancels pending loading and releases playback resources; save/reload and undo preserve the original GIF.
+- Decompressed GIF frame caches are limited to 32 MiB per image and 128 MiB across active notes and the viewer. GIFs above either limit stream frames instead of caching every decompressed frame. Missing or unreadable GIFs retain a visible, selectable placeholder.
+- Image previews have a subtle border, a soft shadow, and controls centered beneath the image that follow its position and scale down for smaller images. Previews initially fit within 80% of the display's width and height, preserving proportions without enlarging small images; zooming in can exceed this limit. Opening expands the image from its position in the note to the center of the display; closing shrinks it back to its current position in the note. These short eased animations respect Windows animation settings. GIF previews keep a still image visible while an asynchronous decoder reads the file and prepares frame data in the background. Playback starts after the opening transition and pauses while closing. Switching or closing cancels pending file loading and disposes the old playback.
 - **Animated GIFs** play in both notes and the image viewer. Paste or drop a GIF file, or use **Copy image** in a browser: when the clipboard includes the original GIF web address, the app downloads it rather than using the static preview. Downloads require network access, are limited to 20 MB and 15 seconds, and fall back to the preview if unavailable. Resizing, reloading, undo and copying between notes preserve animation. Copy includes the original GIF file alongside static image fallbacks for other apps.
-- The formatting bar floats outside the focused note without taking space from its content: below when there is room, otherwise vertically on the right or left, with an above-note fallback. It follows movement and resizing, stays inside the monitor's work area, and keeps the editor focused. It offers bold, italic, underline, strikethrough, bulleted and numbered lists, and checkboxes. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
+- The formatting bar floats outside the focused note without taking space from its content: below when there is room, otherwise vertically on the right or left, with an above-note fallback. It follows movement and resizing, stays inside the monitor's work area, and keeps the editor focused. On small notes it scales down to fit the note's width (or height when vertical), returning to normal size as the note grows. It offers bold, italic, underline, strikethrough, bulleted and numbered lists, and checkboxes. A button is highlighted while its style is active at the cursor or selection, whether you turned it on with the button or a shortcut.
 - **Sub-bullets**: Tab nests a list item under the previous item; Shift+Tab moves it back one level. Select several items to nest or unnest them together. Multiple levels work with bullets, numbered lists and checklists, and are preserved when notes are saved. Enter on an empty sub-bullet returns to its parent level.
 - **Checkboxes**: the checkbox button turns a line into a checklist item (a tick box instead of a bullet), or adds a tick box beside the bullet or number on an existing list item. Click a box to tick it; ticked items are struck through and greyed. Enter starts a new unticked item, Enter on an empty one (or Backspace right after the box) ends it. Typing `[] ` at the start of a line does the same as the button.
 - **Links**: web addresses (`https://�`, `http://�` or `www.�`) typed or pasted into a note become links once you move past them. **Ctrl+click** a link to open it in your default browser; a plain click just places the cursor so you can edit it. Only web addresses are opened, never local files or programs.
-- **Images**: paste a screenshot or copied image (Ctrl+V), or paste or drag in image files (PNG, JPEG, GIF, BMP). Images shrink to fit the note's width and grow back as you widen it. Hovering an image outlines it and shows a toolbar to **preview**, **copy** or **remove** it, plus a corner handle to **resize** it (drag it back to full size to fit the note again; Ctrl+Z undoes a resize). **Click** an image to open it in the built-in viewer: scroll to zoom around the mouse, drag to pan, double-click to switch between fit and actual size, and copy or save a copy from its toolbar (Esc closes it). Images are stored as files in an `images` folder next to `notes.json` and move with your notes if you change the notes folder. Images that are no longer used by any note (including recently deleted notes) are cleaned up at start-up or exit once they've been unused for over a day, so undo keeps working.
+- **Images**: paste a screenshot or copied image (Ctrl+V), or paste or drag in image files (PNG, JPEG, GIF, BMP). Images shrink to fit the note's width and grow back as you widen it. Hovering an image outlines it and shows a toolbar to **preview**, **copy** or **remove** it, plus a corner handle to **resize** it (drag it back to full size to fit the note again; Ctrl+Z undoes a resize). **Click** an image or GIF to select it; **right-click** it to copy or cut. **Double-click** to preview it centered over the note's display, with the desktop and other windows still visible behind it and no window frame or taskbar entry. Click outside the image or press Esc to return to the note; the original image stays in place. Scroll to zoom around the mouse, drag to pan, double-click to switch between fit and actual size, and copy or save a copy from the floating controls. Images are stored as files in an `images` folder next to `notes.json` and move with your notes if you change the notes folder. Images that are no longer used by any note (including recently deleted notes) are cleaned up at start-up or exit once they've been unused for over a day, so undo keeps working.
 - **Undo delete**: deleting a note is immediate, with no confirmation, because it can always be undone. Use **Undo delete note** in the tray menu (right-click the tray icon) to bring the most recently deleted note back with its text, position, colour and reminders. **Recently deleted** in the tray menu lists the last 10 deleted notes (first line of text and how long ago) so you can restore any one of them. They're kept until you exit the app.
 - Everything is saved automatically, by default to `%APPDATA%\StickyNotes\notes.json`.
 - **First-time setup** on the first launch: choose the default colour for new notes, where to save your notes (any folder, e.g. a OneDrive folder), global shortcuts (show/hide notes, create new note), and whether to start with Windows. Change these later from **Settings�** in the tray menu. Changing the folder moves your notes there; if the folder already has notes, you can switch to them instead. The settings themselves are always kept in `%APPDATA%\StickyNotes\settings.json`.
@@ -40,9 +43,11 @@ A lightweight sticky note app for Windows 10/11 built with WPF (.NET 10).
 | Nest / unnest list items | Tab / Shift+Tab within an item or with items selected |
 | Bigger / smaller text | Ctrl+] / Ctrl+[ |
 | Open a link | Ctrl+click it |
-| Preview an image | Click it |
-| Image viewer: zoom / fit / actual size | Mouse wheel or + / - ; 0 ; 1 |
-| Image viewer: copy / save a copy / close | Ctrl+C / Ctrl+S / Esc |
+| Select an image / copy or cut | Click it / right-click it |
+| Preview an image | Double-click it |
+| Image viewer: zoom | +/- buttons or keys: 5 percentage points; drag the percentage left/right; mouse wheel |
+| Image viewer: fit / actual size | 0 / 1 |
+| Image viewer: copy / save a copy / close | Ctrl+C / Ctrl+S / Esc or click outside the image |
 
 ## Install
 
@@ -88,15 +93,21 @@ The installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget i
 dotnet test tests\StickyNotes.Tests
 ```
 
-The tests cover the checklist editing, reminders, undo for deleted notes, shortcuts and the update check. Some open real (off-screen) note windows, so they need a normal Windows desktop session; they use a temporary data folder and never touch your real notes. The [CI workflow](.github/workflows/ci.yml) builds and runs them on every pull request and on pushes to `main`.
+The default regression suite excludes machine-dependent timing checks. Run those separately on a normal Windows desktop:
+
+```powershell
+dotnet test tests\StickyNotes.Tests --filter "Category=Performance"
+```
+
+The tests cover checklist editing, reminders, undo for deleted notes, shortcuts, image and GIF loading, cache budgets, and the update check. Some open real (off-screen) note windows, so they need a normal Windows desktop session; they use a temporary data folder and never touch your real notes. The [CI workflow](.github/workflows/ci.yml) builds and runs the default regression suite on every pull request and on pushes to `main`.
 
 ### Publish a GitHub release
 
 Push a version tag, and the [Release workflow](.github/workflows/release.yml) builds the installer and portable exe and attaches them to a new GitHub release:
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 To build without publishing a release, run the workflow manually from the **Actions** tab; the files are uploaded as build artifacts.

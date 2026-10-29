@@ -11,6 +11,8 @@ using System.Windows.Media.Imaging;
 
 namespace StickyNotes;
 
+internal sealed record GifData(BitmapSource Preview, byte[] Bytes, long DecodedFrameBytes);
+
 /// <summary>
 /// Image files for notes, kept in an "images" folder next to notes.json. Notes refer to them by file name only,
 /// so the notes folder can be moved or synced as a whole.
@@ -131,17 +133,7 @@ internal static class ImageStore
         try
         {
             var bytes = File.ReadAllBytes(path);
-            int width;
-            using (var probe = new MemoryStream(bytes))
-                width = BitmapDecoder.Create(probe, BitmapCreateOptions.None, BitmapCacheOption.None).Frames[0].PixelWidth;
-
-            var image = new BitmapImage();
-            image.BeginInit();
-            image.CacheOption = BitmapCacheOption.OnLoad;
-            image.StreamSource = new MemoryStream(bytes);
-            if (width > MaxDisplayPixels) image.DecodePixelWidth = MaxDisplayPixels;
-            image.EndInit();
-            image.Freeze();
+            var image = DecodeDisplayImage(bytes);
             Cache[name] = image;
             return image;
         }
@@ -150,6 +142,54 @@ internal static class ImageStore
         {
             return null;
         }
+    }
+
+    public static async Task<GifData?> LoadGifAsync(string name, CancellationToken cancellationToken)
+    {
+        if (!IsOwnFileName(name)) return null;
+        var path = Path.Combine(Folder, name);
+        Cache.TryGetValue(name, out var cached);
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var bytes = File.ReadAllBytes(path);
+                var preview = cached ?? DecodeDisplayImage(bytes);
+                using var metadata = new MemoryStream(bytes, writable: false);
+                var decoder = BitmapDecoder.Create(metadata, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+                long frameBytes = 0;
+                foreach (var frame in decoder.Frames)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    frameBytes += (long)frame.PixelWidth * frame.PixelHeight;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                return new GifData(preview, bytes, frameBytes);
+            }, cancellationToken);
+            Cache[name] = result.Preview;
+            return result;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException
+                                       or ArgumentException or FileFormatException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static BitmapSource DecodeDisplayImage(byte[] bytes)
+    {
+        int width;
+        using (var probe = new MemoryStream(bytes))
+            width = BitmapDecoder.Create(probe, BitmapCreateOptions.None, BitmapCacheOption.None).Frames[0].PixelWidth;
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.StreamSource = new MemoryStream(bytes);
+        if (width > MaxDisplayPixels) image.DecodePixelWidth = MaxDisplayPixels;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     /// <summary>The image at full resolution (not cached), for the viewer and copying, or null if it can't be read.</summary>
