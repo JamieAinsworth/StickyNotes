@@ -60,9 +60,10 @@ public class NoteReminderTests
     [Fact]
     public void A_daily_reminder_for_exactly_now_waits_until_tomorrow()
     {
-        var reminder = NoteReminder.Create(Afternoon, recurring: true, now: Afternoon.AddSeconds(20));
+        var reminder = NoteReminder.Create(Afternoon, recurring: true, now: Afternoon);
 
-        Assert.False(reminder.IsDue(Afternoon.AddSeconds(21)));
+        Assert.False(reminder.IsDue(Afternoon));
+        Assert.False(reminder.IsDue(Afternoon.AddSeconds(1)));
         Assert.True(reminder.IsDue(Afternoon.AddDays(1)));
     }
 

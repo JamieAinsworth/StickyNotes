@@ -503,9 +503,12 @@ public class ImageTests
                 UiThread.Pump();
 
                 var image = Assert.IsAssignableFrom<Image>(ImageIn(ManagerScope.EditorOf(note)).Child);
-                UiThread.WaitUntil(() => image.Source != null);
+                UiThread.WaitUntil(() => XamlAnimatedGif.AnimationBehavior.GetAnimator(image) != null);
+                var animator = XamlAnimatedGif.AnimationBehavior.GetAnimator(image);
+                Assert.Equal(1, animator.FrameCount);
+                UiThread.WaitUntil(() => animator.IsComplete);
                 Assert.NotNull(image.Source);
-                Assert.False(image.HasAnimatedProperties);
+                Assert.Equal(0, animator.CurrentFrameIndex);
             }
             finally
             {
@@ -537,7 +540,7 @@ public class ImageTests
                 ImageViewerWindow.Open(still, note);
                 UiThread.Pump();
 
-                Assert.False(picture.HasAnimatedProperties);
+                Assert.Null(XamlAnimatedGif.AnimationBehavior.GetAnimator(picture));
                 Assert.Null(XamlAnimatedGif.AnimationBehavior.GetSourceStream(picture));
                 Assert.NotNull(picture.Source);
             }
@@ -551,6 +554,33 @@ public class ImageTests
 
     private static Point CentreOf(RichTextBox editor, FrameworkElement content) =>
         content.TransformToAncestor(editor).Transform(new Point(content.ActualWidth / 2, content.ActualHeight / 2));
+
+    private static void AssertViewerReopensDuringDismissal(ImageViewerWindow viewer, string name, NoteWindow note)
+    {
+        var root = (FrameworkElement)viewer.Content;
+        var picture = (Image)root.FindName("Picture");
+        var previousAnimator = XamlAnimatedGif.AnimationBehavior.GetAnimator(picture);
+        Assert.False(viewer.IsTransitioning);
+        Assert.Equal(1, root.Opacity);
+        Assert.True(root.RenderTransform.Value.IsIdentity);
+
+        Assert.True(viewer.DismissIfOutsideImage(new Point(0, 0)));
+        Assert.True(viewer.IsTransitioning);
+        if (previousAnimator != null) Assert.True(previousAnimator.IsPaused);
+        Assert.Same(viewer, ImageViewerWindow.Open(name, note));
+        Assert.Null(XamlAnimatedGif.AnimationBehavior.GetSourceStream(picture));
+        UiThread.WaitUntil(() => !viewer.IsTransitioning);
+        Assert.Same(viewer, ImageViewerWindow.Current);
+        Assert.True(root.IsHitTestVisible);
+        Assert.Equal(1, root.Opacity);
+        Assert.True(root.RenderTransform.Value.IsIdentity);
+        if (previousAnimator != null)
+        {
+            Assert.True(previousAnimator.IsPaused);
+            UiThread.WaitUntil(() => XamlAnimatedGif.AnimationBehavior.GetAnimator(picture) is { IsPaused: false });
+            Assert.NotSame(previousAnimator, XamlAnimatedGif.AnimationBehavior.GetAnimator(picture));
+        }
+    }
 
     [Fact]
     public void Gif_loading_estimates_decoded_frame_memory_without_expanding_frames()
@@ -716,14 +746,7 @@ public class ImageTests
                 var controller = XamlAnimatedGif.AnimationBehavior.GetAnimator(picture)!;
                 Assert.Equal(2, controller.FrameCount);
 
-                viewer.DismissIfOutsideImage(new Point(0, 0));
-                Assert.True(viewer.IsTransitioning);
-                Assert.True(controller.IsPaused);
-                Assert.Same(viewer, ImageViewerWindow.Open(name, note));
-                Assert.Null(XamlAnimatedGif.AnimationBehavior.GetSourceStream(picture));
-                Assert.True(controller.IsPaused);
-                UiThread.WaitUntil(() => XamlAnimatedGif.AnimationBehavior.GetAnimator(picture) is { IsPaused: false });
-                Assert.NotSame(controller, XamlAnimatedGif.AnimationBehavior.GetAnimator(picture));
+                AssertViewerReopensDuringDismissal(viewer, name, note);
                 viewer.DismissIfOutsideImage(new Point(0, 0));
                 UiThread.WaitUntil(() => ImageViewerWindow.Current == null);
                 Assert.Null(XamlAnimatedGif.AnimationBehavior.GetSourceStream(picture));
@@ -865,19 +888,22 @@ public class ImageTests
     }
 
     [Fact]
-    public void A_resized_image_keeps_its_width_after_reloading()
+    public void A_deleted_note_restores_its_image_caption_and_resized_width()
     {
         UiThread.Run(() =>
         {
             using var scope = new ManagerScope();
-            var note = scope.CreateNote();
-            note.InsertImages(new[] { ImageStore.Save(Bitmap(200, 100)) });
+            var note = scope.CreateNote("caption");
+            var name = ImageStore.Save(Bitmap(200, 100));
+            note.InsertImages(new[] { name });
             var editor = ManagerScope.EditorOf(note);
 
             ImageEditor.SetWidth(editor, ImageLinkIn(editor), 80);
             UiThread.Pump();
             Assert.Equal(80, ((FrameworkElement)ImageIn(editor).Child).Width);
             var data = note.CaptureData();
+            Assert.Contains(ImageEditor.Scheme, data.Content);
+            Assert.Equal(name, Assert.Single(ImageStore.NamesIn(data.Content)));
 
             scope.Manager.DeleteNote(note);
             var restored = scope.Manager.UndoDelete(data)!;
@@ -885,8 +911,11 @@ public class ImageTests
 
             var restoredEditor = ManagerScope.EditorOf(restored);
             Assert.Equal(80, ImageEditor.WidthOf(ImageLinkIn(restoredEditor)));
-            Assert.Equal(80, ((FrameworkElement)ImageIn(restoredEditor).Child).Width);
-            Assert.Single(ImageStore.NamesIn(data.Content));
+            var image = Assert.IsType<Image>(ImageIn(restoredEditor).Child);
+            Assert.NotNull(image.Source);
+            Assert.Equal(80, image.Width);
+            Assert.Equal(name, Assert.Single(ImageEditor.NamesIn(restoredEditor.Document)));
+            Assert.Contains("caption", ManagerScope.TextOf(restored));
         });
     }
 
@@ -1095,16 +1124,7 @@ public class ImageTests
                 var root = (FrameworkElement)viewer.Content;
                 Assert.True(viewer.IsTransitioning);
                 UiThread.WaitUntil(() => !viewer.IsTransitioning);
-                Assert.Equal(1, root.Opacity);
-                Assert.Equal(1, root.RenderTransform.Value.M11);
-
-                Assert.True(viewer.DismissIfOutsideImage(new Point(0, 0)));
-                Assert.True(viewer.IsTransitioning);
-                Assert.Same(viewer, ImageViewerWindow.Open(name, note));
-                UiThread.WaitUntil(() => !viewer.IsTransitioning);
-                Assert.Same(viewer, ImageViewerWindow.Current);
-                Assert.True(root.IsHitTestVisible);
-                Assert.Equal(1, root.Opacity);
+                AssertViewerReopensDuringDismissal(viewer, name, note);
 
                 var close = (Button)root.FindName("CloseButton");
                 close.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -1347,27 +1367,6 @@ public class ImageTests
         var link = new Hyperlink { NavigateUri = uri };
         Assert.Equal(name, ImageEditor.NameOf(link));
         Assert.Equal(width is null ? null : 120, ImageEditor.WidthOf(link));
-    }
-
-    [Fact]
-    public void Images_survive_saving_and_reloading_a_note()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            var note = scope.CreateNote("caption");
-            note.InsertImages(new[] { ImageStore.Save(Bitmap()) });
-            var data = note.CaptureData();
-            Assert.Contains(ImageEditor.Scheme, data.Content);
-
-            scope.Manager.DeleteNote(note);
-            var restored = scope.Manager.UndoDelete(data)!;
-            UiThread.Pump();
-
-            var editor = ManagerScope.EditorOf(restored);
-            Assert.IsType<Image>(ImageIn(editor).Child);
-            Assert.Contains("caption", ManagerScope.TextOf(restored));
-        });
     }
 
     [Fact]

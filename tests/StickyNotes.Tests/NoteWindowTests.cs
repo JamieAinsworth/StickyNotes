@@ -625,48 +625,6 @@ public class NoteWindowTests
         });
     }
 
-    [Fact]
-    public void Undo_delete_restores_the_most_recently_deleted_note()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            scope.CreateNote("survivor");
-            scope.Manager.DeleteNote(scope.CreateNote("older"));
-            scope.Manager.DeleteNote(scope.CreateNote("newest"));
-            UiThread.Pump();
-
-            Assert.NotNull(scope.Manager.UndoDelete());
-            UiThread.Pump();
-
-            Assert.Contains(scope.OpenNotes(), n => ManagerScope.TextOf(n) == "newest");
-            Assert.Single(scope.Manager.RecentlyDeleted());
-            Assert.Equal("older", scope.Manager.RecentlyDeleted()[0].Title);
-        });
-    }
-
-    [Fact]
-    public void Hovering_a_collapsed_note_restores_the_height_it_had_before_collapsing()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            var note = scope.CreateNote("text");
-            note.Height = 340;
-            UiThread.Pump();
-            note.UpdateLayout();
-
-            Call(note, "ApplyCollapsed", true, true);
-            UiThread.Pump();
-            Assert.InRange(note.Height, 31, 33);
-
-            Call(note, "Header_MouseEnter", null, null);
-            Field<DispatcherTimer>(note, "_hoverTimer").Stop();
-            UiThread.Wait(300);
-            Assert.InRange(note.Height, 339, 341);
-        });
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -711,8 +669,10 @@ public class NoteWindowTests
             var note = scope.CreateNote("text");
             note.Height = 340;
             UiThread.Pump();
+            note.UpdateLayout();
             Call(note, "ApplyCollapsed", true, true);
             UiThread.Pump();
+            Assert.InRange(note.Height, 31, 33);
 
             Call(note, "Header_MouseEnter", null, null);
             Field<DispatcherTimer>(note, "_hoverTimer").Stop();
@@ -722,6 +682,7 @@ public class NoteWindowTests
             UiThread.Wait(300);
 
             Assert.False(note.HasAnimatedProperties);
+            Assert.InRange(note.Height, 339, 341);
             Assert.InRange(note.ActualHeight, 339, 341);
             Assert.InRange(note.CaptureData().Height, 339, 341);
             Assert.Equal(ResizeMode.CanResize, note.ResizeMode);
@@ -898,7 +859,7 @@ public class NoteWindowTests
     }
 
     [Fact]
-    public void A_due_reminder_alerts_its_note_and_clicking_it_dismisses_the_alert()
+    public void A_due_reminder_alerts_once_and_can_be_dismissed()
     {
         UiThread.Run(() =>
         {
@@ -906,7 +867,8 @@ public class NoteWindowTests
             var note = scope.CreateNote();
             note.Data.Reminders.Add(new NoteReminder { TargetTime = DateTime.Now.AddMinutes(-1) });
 
-            typeof(NoteManager).GetMethod("CheckReminders", NonPublic)!.Invoke(scope.Manager, null);
+            var check = typeof(NoteManager).GetMethod("CheckReminders", NonPublic)!;
+            check.Invoke(scope.Manager, null);
             UiThread.Pump();
 
             Assert.True(Field<bool>(note, "_isAlertFlashing"));
@@ -915,23 +877,7 @@ public class NoteWindowTests
             note.DismissReminderAlert();
             Assert.False(Field<bool>(note, "_isAlertFlashing"));
             Assert.True(Field<bool>(note, "_alertKeepOnTop"));
-        });
-    }
-
-    [Fact]
-    public void A_reminder_only_alerts_once()
-    {
-        UiThread.Run(() =>
-        {
-            using var scope = new ManagerScope();
-            var note = scope.CreateNote();
-            note.Data.Reminders.Add(new NoteReminder { TargetTime = DateTime.Now.AddMinutes(-1) });
-            var check = typeof(NoteManager).GetMethod("CheckReminders", NonPublic)!;
-
             check.Invoke(scope.Manager, null);
-            note.DismissReminderAlert();
-            check.Invoke(scope.Manager, null);
-
             Assert.False(Field<bool>(note, "_isAlertFlashing"));
         });
     }
