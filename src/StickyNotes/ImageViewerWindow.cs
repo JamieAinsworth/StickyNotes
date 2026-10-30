@@ -130,11 +130,14 @@ internal sealed class ImageViewerWindow : Window
     private double _zoomDragStartScale;
     private bool _dismissing;
     private int _transitionVersion;
+    private readonly DispatcherTimer _transitionTimer = new(DispatcherPriority.Render);
+    private Action? _completeTransition;
 
     internal bool IsTransitioning { get; private set; }
 
     private ImageViewerWindow()
     {
+        _transitionTimer.Tick += (_, _) => _completeTransition?.Invoke();
         Title = "Image - Sticky Notes";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
@@ -493,12 +496,13 @@ internal sealed class ImageViewerWindow : Window
         _transitionScale.ScaleY = fromScaleY;
         _transitionTranslate.X = fromX;
         _transitionTranslate.Y = fromY;
-        var duration = new Duration(TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation ? 280 : 0));
+        var transitionTime = TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation ? 280 : 0);
+        var duration = new Duration(transitionTime);
         var easing = new CubicEase { EasingMode = closing ? EasingMode.EaseIn : EasingMode.EaseOut };
         var opacity = new DoubleAnimation(fromOpacity, toOpacity, duration) { EasingFunction = easing, FillBehavior = FillBehavior.Stop };
-        opacity.Completed += (_, _) =>
+        Action complete = () =>
         {
-            if (version != _transitionVersion) return;
+            if (version != _transitionVersion || !IsTransitioning) return;
             _root.Opacity = toOpacity;
             _transitionScale.ScaleX = toScaleX;
             _transitionScale.ScaleY = toScaleY;
@@ -515,6 +519,8 @@ internal sealed class ImageViewerWindow : Window
                 _ = StartGifAsync(gif, version);
             }));
         };
+        opacity.Completed += (_, _) => complete();
+        _completeTransition = complete;
         IsTransitioning = true;
         _root.BeginAnimation(OpacityProperty, opacity);
         _transitionScale.BeginAnimation(ScaleTransform.ScaleXProperty,
@@ -525,10 +531,14 @@ internal sealed class ImageViewerWindow : Window
             new DoubleAnimation(fromX, toX, duration) { EasingFunction = easing, FillBehavior = FillBehavior.Stop });
         _transitionTranslate.BeginAnimation(TranslateTransform.YProperty,
             new DoubleAnimation(fromY, toY, duration) { EasingFunction = easing, FillBehavior = FillBehavior.Stop });
+        _transitionTimer.Interval = transitionTime > TimeSpan.Zero ? transitionTime : TimeSpan.FromMilliseconds(1);
+        _transitionTimer.Start();
     }
 
     private void ClearTransitionAnimations()
     {
+        _transitionTimer.Stop();
+        _completeTransition = null;
         _root.BeginAnimation(OpacityProperty, null);
         _transitionScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
         _transitionScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);

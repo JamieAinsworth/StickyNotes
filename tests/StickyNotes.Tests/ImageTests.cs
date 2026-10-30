@@ -1111,6 +1111,35 @@ public class ImageTests
     }
 
     [Fact]
+    public void The_viewer_completes_transitions_when_the_render_clock_is_removed()
+    {
+        UiThread.Run(() =>
+        {
+            using var scope = new ManagerScope();
+            var note = scope.CreateNote();
+            var viewer = ImageViewerWindow.Open(ImageStore.Save(Bitmap(600, 400)), note);
+            try
+            {
+                var root = (FrameworkElement)viewer.Content;
+                root.BeginAnimation(UIElement.OpacityProperty, null);
+                UiThread.WaitUntil(() => !viewer.IsTransitioning);
+                Assert.Equal(1, root.Opacity);
+                Assert.True(root.RenderTransform.Value.IsIdentity);
+
+                Assert.True(viewer.DismissIfOutsideImage(new Point(0, 0)));
+                root.BeginAnimation(UIElement.OpacityProperty, null);
+                UiThread.WaitUntil(() => ImageViewerWindow.Current == null);
+                Assert.False(viewer.IsVisible);
+                Assert.True(note.IsActive);
+            }
+            finally
+            {
+                if (viewer.IsVisible) viewer.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void The_viewer_animates_opening_and_closing_and_can_reopen_during_dismissal()
     {
         UiThread.Run(() =>

@@ -118,12 +118,14 @@ public class ZOrderTests
                 other.ApplyZOrder();
                 UiThread.Pump();
                 if (other.IsActive) return; // Focus landed on the background note; the hold rightly doesn't apply.
+                Assert.True(NativeMethods.SetWindowPos(Hwnd(probe), IntPtr.Zero, 0, 0, 0, 0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE));
                 Assert.True(IsAbove(Hwnd(probe), Hwnd(other)));
 
                 // What Windows does to the rest of the desktop-owned group when one note activates.
                 scope.Manager.BeginActivating(activating);
-                NativeMethods.SetWindowPos(Hwnd(other), IntPtr.Zero, 0, 0, 0, 0,
-                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                Assert.True(NativeMethods.SetWindowPos(Hwnd(other), IntPtr.Zero, 0, 0, 0, 0,
+                    NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE));
 
                 Assert.True(IsAbove(Hwnd(probe), Hwnd(other)));
             }
