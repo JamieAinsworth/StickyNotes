@@ -74,6 +74,7 @@ public class NoteManagerTests
         UiThread.Run(() =>
         {
             using var scope = new ManagerScope();
+            var survivor = scope.CreateNote("survivor");
             var first = scope.CreateNote("first");
             var second = scope.CreateNote("second");
             scope.Manager.DeleteNote(first);
@@ -81,10 +82,18 @@ public class NoteManagerTests
             UiThread.Pump();
 
             var one = scope.Manager.UndoDelete();
-            var two = scope.Manager.UndoDelete();
-
+            UiThread.Pump();
+            Assert.NotNull(one);
             Assert.Equal("second", ManagerScope.TextOf(one!));
+            Assert.Contains(scope.OpenNotes(), note => ManagerScope.TextOf(note) == "second");
+            Assert.Contains(survivor, scope.OpenNotes());
+            Assert.Equal("first", Assert.Single(scope.Manager.RecentlyDeleted()).Title);
+
+            var two = scope.Manager.UndoDelete();
+            Assert.NotNull(two);
             Assert.Equal("first", ManagerScope.TextOf(two!));
+            Assert.Contains(survivor, scope.OpenNotes());
+            Assert.Empty(scope.Manager.RecentlyDeleted());
         });
     }
 

@@ -69,6 +69,23 @@ internal static class UiThread
     public static void Pump() =>
         Dispatcher.CurrentDispatcher.Invoke(DispatcherPriority.Background, new Action(() => { }));
 
+    public static void WaitUntil(Func<bool> condition, int timeoutMilliseconds = 3000)
+    {
+        if (condition()) return;
+        long started = Environment.TickCount64;
+        var frame = new DispatcherFrame();
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
+        timer.Tick += (_, _) =>
+        {
+            if (condition() || Environment.TickCount64 - started >= timeoutMilliseconds)
+                frame.Continue = false;
+        };
+        timer.Start();
+        try { Dispatcher.PushFrame(frame); }
+        finally { timer.Stop(); }
+        if (!condition()) throw new TimeoutException("The UI did not reach the expected state.");
+    }
+
     /// <summary>Keeps the UI thread processing messages (timers fire) for a while. Call from inside <see cref="Run(Action)"/>.</summary>
     public static void Wait(int milliseconds)
     {

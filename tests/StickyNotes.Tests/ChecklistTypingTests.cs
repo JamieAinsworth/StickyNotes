@@ -80,7 +80,7 @@ public class ChecklistTypingTests
     }
 
     [Fact]
-    public void Typing_after_ticking_an_empty_item_works_when_the_caret_is_somewhere_else_first()
+    public void Typing_into_an_empty_ticked_item_without_repositioning_the_caret_is_struck_through()
     {
         UiThread.Run(() =>
         {
@@ -94,6 +94,7 @@ public class ChecklistTypingTests
 
             Assert.Equal($"{Tick} ab", ChecklistEditor.ParagraphText(item));
             Assert.True(Struck(Content(item)));
+            Assert.True(Grey(Content(item)));
         });
     }
 
@@ -154,23 +155,39 @@ public class ChecklistTypingTests
         });
     }
 
-    [Fact]
-    public void Text_typed_before_the_box_or_in_a_normal_paragraph_is_unaffected()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Typing_outside_ticked_content_leaves_text_unformatted(bool beforeCheckbox)
     {
         UiThread.Run(() =>
         {
             using var scope = new ManagerScope();
             var note = scope.CreateNote();
             var editor = ManagerScope.EditorOf(note);
-            ManagerScope.SetText(note, "plain");
-            var paragraph = editor.Document.Blocks.OfType<Paragraph>().First();
-            editor.CaretPosition = paragraph.ContentEnd;
+            Paragraph paragraph;
+            if (beforeCheckbox)
+            {
+                (editor, paragraph) = EmptyChecklistItem(note);
+                ChecklistEditor.ToggleDone(editor, paragraph);
+                editor.CaretPosition = EditorHost.Start(paragraph);
+            }
+            else
+            {
+                ManagerScope.SetText(note, "plain");
+                paragraph = editor.Document.Blocks.OfType<Paragraph>().First();
+                editor.CaretPosition = paragraph.ContentEnd;
+            }
             Keyboard.Focus(editor);
 
-            Type(editor, " text");
+            Type(editor, beforeCheckbox ? "before " : " text");
 
-            Assert.Equal("plain text", ChecklistEditor.ParagraphText(paragraph));
-            Assert.False(Struck(new TextRange(paragraph.ContentStart, paragraph.ContentEnd)));
+            Assert.Equal(beforeCheckbox ? $"before {Tick} " : "plain text", ChecklistEditor.ParagraphText(paragraph));
+            var typed = beforeCheckbox
+                ? new TextRange(EditorHost.Start(paragraph), EditorHost.After(EditorHost.Start(paragraph), "before ".Length))
+                : new TextRange(paragraph.ContentStart, paragraph.ContentEnd);
+            Assert.False(Struck(typed));
+            Assert.False(Grey(typed));
         });
     }
 }

@@ -47,6 +47,12 @@
             </Setter>
         </Style>
 
+        <Style x:Key="HeaderActionButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Focusable" Value="True" />
+        </Style>
+
         <!-- Slim pill scrollbar: translucent dark thumb on a transparent track, so it takes the tone of the note colour -->
         <Style x:Key="PillThumb" TargetType="Thumb">
             <Setter Property="Template">
@@ -130,37 +136,63 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="30" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <!-- Header: drag to move -->
             <Border x:Name="Header" Grid.Row="0" Background="#F5E77A" Cursor="SizeAll"
                     MouseLeftButtonDown="Header_MouseLeftButtonDown"
-                    MouseEnter="Header_MouseEnter">
-                <DockPanel LastChildFill="False" Margin="2,0">
-                    <Button DockPanel.Dock="Left" Style="{StaticResource IconButton}" Content="&#xE710;"
-                            ToolTip="New note" Click="NewNote_Click" />
-                    <Button x:Name="CollapseButton" DockPanel.Dock="Left" Style="{StaticResource IconButton}"
-                            Content="&#xE70E;" ToolTip="Collapse note" Click="Collapse_Click" />
-                    <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE74D;"
-                            ToolTip="Delete note (undo with Ctrl+Shift+Z)" Click="Delete_Click" />
-                    <Button x:Name="ReminderButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                            ToolTip="Set reminders" Click="Reminder_Click">
-                        <Grid>
-                            <TextBlock x:Name="ReminderBellOutline" Text="&#xEA8F;" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                            <!-- Filled bell shown while the note has an active reminder (the icon font has no solid bell) -->
-                            <Path x:Name="ReminderBellFilled" Visibility="Collapsed" Width="15" Height="15" Stretch="Uniform"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#D0000000"
-                                  Data="M8,0.3 C8.4,0.3 8.8,0.6 8.8,1 V1.6 C11,2 12,3.8 12,5.5 V8 C12,9.5 12.5,10.3 13.4,11.2 C13.8,11.6 13.5,12.3 12.9,12.3 H3.1 C2.5,12.3 2.2,11.6 2.6,11.2 C3.5,10.3 4,9.5 4,8 V5.5 C4,3.8 5,2 7.2,1.6 V1 C7.2,0.6 7.6,0.3 8,0.3 Z M6.5,13.5 H9.5 C9.5,14.4 8.8,15 8,15 C7.2,15 6.5,14.4 6.5,13.5 Z" />
+                    MouseEnter="Header_MouseEnter" MouseLeave="HeaderActions_MouseLeave"
+                    LostKeyboardFocus="HeaderActions_LostKeyboardFocus">
+                <Grid Margin="2,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="CollapseButton" Grid.Column="0" Style="{StaticResource IconButton}"
+                            Content="&#xE70E;" ToolTip="Collapse note" Click="Collapse_Click"
+                            Focusable="True" AutomationProperties.Name="Collapse or expand note" />
+                        <Grid x:Name="HeaderTitleArea" Grid.Column="1" ClipToBounds="True"
+                          SizeChanged="HeaderTitleArea_SizeChanged">
+                        <TextBlock x:Name="HeaderTitle" Margin="4,0"
+                               VerticalAlignment="Center" FontSize="12" FontWeight="SemiBold"
+                               Foreground="#D0000000" TextTrimming="CharacterEllipsis"
+                               TextWrapping="NoWrap" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                        <Border x:Name="HeaderActions" Visibility="Collapsed" Opacity="0" IsHitTestVisible="False"
+                            Background="{Binding Background, ElementName=Header}" Cursor="Arrow">
+                            <Border.RenderTransform><TranslateTransform x:Name="HeaderActionsSlide" X="16" /></Border.RenderTransform>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button x:Name="HeaderNewButton" Style="{StaticResource HeaderActionButton}" Content="&#xE710;"
+                                ToolTip="New note" AutomationProperties.Name="New note" Click="NewNote_Click" />
+                            <Button x:Name="HeaderPinButton" Style="{StaticResource HeaderActionButton}" Content="&#xE718;"
+                                ToolTip="Pin in place" AutomationProperties.Name="Pin in place" Click="Pin_Click" />
+                            <Button x:Name="HeaderOnTopButton" Style="{StaticResource HeaderActionButton}" Content="&#xE74A;"
+                                ToolTip="Keep above all windows" AutomationProperties.Name="Always on top" Click="OnTop_Click" />
+                            <Button x:Name="HeaderColorButton" Style="{StaticResource HeaderActionButton}" Content="&#xE790;"
+                                ToolTip="Change colour" AutomationProperties.Name="Change colour" Click="HeaderColor_Click">
+                                <Button.ContextMenu>
+                                <ContextMenu x:Name="HeaderColorMenu" Placement="Bottom" Closed="HeaderColorMenu_Closed" />
+                                </Button.ContextMenu>
+                            </Button>
+                            <Button x:Name="HeaderReminderButton" Style="{StaticResource HeaderActionButton}"
+                                ToolTip="Set reminders" AutomationProperties.Name="Reminders" Click="Reminder_Click">
+                                <Grid Width="16" Height="16">
+                                    <TextBlock x:Name="ReminderBellOutline" Text="&#xEA8F;" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    <Path x:Name="ReminderBellFilled" Visibility="Collapsed" Width="15" Height="15" Stretch="Uniform"
+                                          HorizontalAlignment="Center" VerticalAlignment="Center" Fill="#D0000000"
+                                          Data="M8,0.3 C8.4,0.3 8.8,0.6 8.8,1 V1.6 C11,2 12,3.8 12,5.5 V8 C12,9.5 12.5,10.3 13.4,11.2 C13.8,11.6 13.5,12.3 12.9,12.3 H3.1 C2.5,12.3 2.2,11.6 2.6,11.2 C3.5,10.3 4,9.5 4,8 V5.5 C4,3.8 5,2 7.2,1.6 V1 C7.2,0.6 7.6,0.3 8,0.3 Z M6.5,13.5 H9.5 C9.5,14.4 8.8,15 8,15 C7.2,15 6.5,14.4 6.5,13.5 Z" />
+                                </Grid>
+                            </Button>
+                            <Button x:Name="HeaderDeleteButton" Style="{StaticResource HeaderActionButton}" Content="&#xE74D;"
+                                ToolTip="Delete note (undo from the tray icon)" AutomationProperties.Name="Delete note" Click="Delete_Click" />
+                            </StackPanel>
+                        </Border>
                         </Grid>
-                    </Button>
-                    <Button x:Name="ColorButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                            Content="&#xE790;" ToolTip="Change colour" Click="Color_Click" />
-                    <Button x:Name="OnTopButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                            Content="&#xE74A;" ToolTip="Keep above all windows" Click="OnTop_Click" />
-                    <Button x:Name="PinButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}"
-                            Content="&#xE718;" ToolTip="Pin in place" Click="Pin_Click" />
-                </DockPanel>
+                    <Button x:Name="MenuButton" Grid.Column="2" Style="{StaticResource IconButton}"
+                            Content="&#xE700;" ToolTip="Note actions"
+                            MouseEnter="MenuButton_MouseEnter" GotKeyboardFocus="MenuButton_GotKeyboardFocus"
+                            Focusable="True" AutomationProperties.Name="Note actions" />
+                </Grid>
             </Border>
 
             <!-- Note text: wraps lines and scrolls vertically when it overflows -->
@@ -173,6 +205,7 @@
                          PreviewKeyDown="Editor_PreviewKeyDown"
                          PreviewTextInput="Editor_PreviewTextInput"
                          PreviewMouseLeftButtonDown="Editor_PreviewMouseLeftButtonDown"
+                         PreviewMouseRightButtonDown="Editor_PreviewMouseRightButtonDown"
                          PreviewMouseMove="Editor_PreviewMouseMove">
                 <RichTextBox.Resources>
                     <Style TargetType="ScrollBar" BasedOn="{StaticResource PillScrollBar}" />
@@ -187,9 +220,11 @@
                 <FlowDocument PagePadding="0" />
             </RichTextBox>
 
-            <!-- Formatting bar: visible while the note is focused -->
-            <Border x:Name="Toolbar" Grid.Row="2" Background="#10000000" Visibility="Collapsed">
-                <StackPanel Orientation="Horizontal" Margin="4,2">
+            <Popup x:Name="FormattingPopup" Placement="Relative" PlacementTarget="{Binding ElementName=OuterBorder}"
+                   StaysOpen="True" AllowsTransparency="True" Focusable="False">
+            <Border x:Name="Toolbar" Background="{Binding Background, ElementName=Header}"
+                    BorderBrush="#33000000" BorderThickness="1" CornerRadius="4">
+                <StackPanel x:Name="FormattingButtons" Orientation="Horizontal" Margin="4,2">
                     <Button Style="{StaticResource FormatButton}" x:Name="BoldButton" Content="B" FontWeight="Bold"
                             ToolTip="Bold (Ctrl+B)"
                             Command="EditingCommands.ToggleBold" CommandTarget="{Binding ElementName=Editor}" />
@@ -204,7 +239,7 @@
                             Click="Strikethrough_Click">
                         <TextBlock Text="S" TextDecorations="Strikethrough" />
                     </Button>
-                    <Rectangle Width="1" Margin="4,4" Fill="#33000000" />
+                    <Rectangle x:Name="FormattingSeparator" Width="1" Margin="4,4" Fill="#33000000" />
                     <Button Style="{StaticResource FormatButton}" FontFamily="{StaticResource IconFont}"
                             x:Name="BulletsButton" FontSize="14" Content="&#xE8FD;" ToolTip="Bulleted list (Ctrl+Shift+L, or type &quot;- &quot;)"
                             Command="EditingCommands.ToggleBullets" CommandTarget="{Binding ElementName=Editor}" />
@@ -217,6 +252,7 @@
                             Click="Checklist_Click" />
                 </StackPanel>
             </Border>
+            </Popup>
         </Grid>
     </Border>
 </Window>

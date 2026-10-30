@@ -8,6 +8,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <VSTestTestCaseFilter Condition="'$(VSTestTestCaseFilter)' == ''">Category!=Performance</VSTestTestCaseFilter>
     <RootNamespace>StickyNotes.Tests</RootNamespace>
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
   </PropertyGroup>

@@ -129,6 +129,65 @@ public class ScreenPlacementTests
     }
 
     [Fact]
+    public void Formatting_toolbar_prefers_below_the_note_when_it_fits()
+    {
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(100, 100, 380, 380), new[] { MainWork }, 220, 32, 32, 220, 4);
+
+        Assert.False(placement.Vertical);
+        Assert.Equal(new PixelRect(100, 384, 320, 416), placement.Bounds);
+    }
+
+    [Theory]
+    [InlineData(100, 380, 384)]
+    [InlineData(1640, 1920, 1604)]
+    public void Formatting_toolbar_uses_a_visible_side_when_there_is_no_space_below(int left, int right, int toolbarLeft)
+    {
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(left, 760, right, 1040), new[] { MainWork }, 220, 32, 32, 220, 4);
+
+        Assert.True(placement.Vertical);
+        Assert.Equal(new PixelRect(toolbarLeft, 760, toolbarLeft + 32, 980), placement.Bounds);
+    }
+
+    [Fact]
+    public void Formatting_toolbar_uses_above_when_below_and_both_sides_are_blocked()
+    {
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(0, 760, 1920, 1040), new[] { MainWork }, 220, 32, 32, 220, 4);
+
+        Assert.False(placement.Vertical);
+        Assert.Equal(new PixelRect(0, 724, 220, 756), placement.Bounds);
+    }
+
+    [Fact]
+    public void Formatting_toolbar_stays_on_screen_at_the_bottom_left_and_on_negative_monitors()
+    {
+        var work = new PixelRect(-1920, -1080, 0, -40);
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(-1920, -180, -1640, -40), new[] { MainWork, work }, 220, 32, 32, 220, 4);
+
+        Assert.True(placement.Vertical);
+        Assert.Equal(new PixelRect(-1636, -260, -1604, -40), placement.Bounds);
+    }
+
+    [Fact]
+    public void Formatting_toolbar_prefers_the_notes_monitor_over_a_staggered_neighbor()
+    {
+        var upperRight = new PixelRect(1920, -1080, 3840, 0);
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(1640, 760, 1920, 1040),
+            new[] { upperRight, MainWork }, 220, 32, 32, 220, 4);
+
+        Assert.True(placement.Vertical);
+        Assert.Equal(new PixelRect(1604, 760, 1636, 980), placement.Bounds);
+    }
+
+    [Fact]
+    public void Formatting_toolbar_clamps_horizontally_near_the_right_edge()
+    {
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(1740, 100, 1920, 380), new[] { MainWork }, 220, 32, 32, 220, 4);
+
+        Assert.False(placement.Vertical);
+        Assert.Equal(new PixelRect(1700, 384, 1920, 416), placement.Bounds);
+    }
+
+    [Fact]
     public void Rectangles_report_their_size_and_overlap()
     {
         var overlap = new PixelRect(0, 0, 100, 100).Intersect(new PixelRect(60, 80, 300, 300));

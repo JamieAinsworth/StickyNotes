@@ -4,7 +4,11 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Media;
+using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -13,6 +17,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
 
@@ -24,10 +29,13 @@ public partial class NoteWindow : Window
     private const double CollapsedHeight = 32;
 
     private readonly NoteManager _manager;
+    private readonly CancellationTokenSource _imagePasteCancellation = new();
     private IntPtr _hwnd;
     private bool _formatUpdateQueued;
     private double _uncollapsedHeight = NoteData.DefaultSize;
     private bool _isHoverExpanded;
+    private bool _isHoverAnimating;
+    private bool _headerActionsVisible;
     private bool _isManagerExpanded;
     private bool _isAlertFlashing;
     private bool _alertKeepOnTop;
@@ -53,9 +61,18 @@ public partial class NoteWindow : Window
 
         _hoverTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _hoverTimer.Tick += (_, _) => CollapseIfCursorLeft();
+        foreach (var button in FormattingButtons.Children.OfType<Button>())
+            if (button.Command != null) button.CommandTarget = Editor;
 
         LoadContent();
+        UpdateHeaderTitle();
+        PopulateColorMenu();
         ChecklistEditor.RefreshGlyphs(Editor.Document);
+        ImageEditor.Hydrate(Editor);
+        LinkEditor.Relink(Editor, includeCaret: true);
+        // Loading isn't something to undo; without this Ctrl+Z could strip the pictures back out.
+        Editor.IsUndoEnabled = false;
+        Editor.IsUndoEnabled = true;
         ApplyColor(NoteColors.Get(data.Color));
         ApplyPinned(data.Pinned);
         ApplyAlwaysOnTop(data.AlwaysOnTop);
@@ -63,6 +80,19 @@ public partial class NoteWindow : Window
         UpdateReminderButton();
 
         DataObject.AddPastingHandler(Editor, OnPaste);
+        DataObject.AddCopyingHandler(Editor, (_, e) =>
+        {
+            if (!e.IsDragDrop) ImageEditor.AddClipboardFormats(Editor, e.DataObject);
+        });
+        // A pasted address ends at the caret; link it straight away rather than waiting for the next space.
+        DataObject.AddPastingHandler(Editor, (_, _) => _relinkIncludeCaret = true);
+        Editor.AddHandler(PreviewDragOverEvent, new DragEventHandler(Editor_PreviewDragOver), true);
+        Editor.AddHandler(PreviewDropEvent, new DragEventHandler(Editor_PreviewDrop), true);
+        Editor.SizeChanged += (_, _) => ImageEditor.FitToWidth(Editor);
+        Editor.MouseLeave += (_, _) =>
+        {
+            if (_imageOverlay is { IsResizing: false }) HideImageOverlay();
+        };
         Editor.TextChanged += Editor_TextChanged;
         Editor.SelectionChanged += (_, _) => UpdateFormatButtons();
         // Formatting commands (buttons or Ctrl+B etc.) with no selection change nothing visible yet, so refresh after them too.
@@ -71,6 +101,7 @@ public partial class NoteWindow : Window
         LocationChanged += (_, _) =>
         {
             _alertGlow?.Follow();
+            UpdateFormattingToolbar();
             _manager.RequestSave();
         };
         SizeChanged += (_, _) =>
@@ -83,16 +114,18 @@ public partial class NoteWindow : Window
                 }
             }
             _alertGlow?.Follow();
+            UpdateFormattingToolbar();
             _manager.RequestSave();
         };
         Activated += (_, _) =>
         {
-            if (!IsEffectivelyCollapsed) Toolbar.Visibility = Visibility.Visible;
+            UpdateFormattingToolbar();
             _alertGlow?.Follow();
         };
         Deactivated += (_, _) =>
         {
-            Toolbar.Visibility = Visibility.Collapsed;
+            FormattingPopup.IsOpen = false;
+            RelinkNow(includeCaret: true);
             _alertKeepOnTop = false;
             ApplyZOrder();
             _manager.NoteDeactivated();
@@ -105,22 +138,83 @@ public partial class NoteWindow : Window
 
         PreviewMouseDown += (_, _) => DismissReminderAlert();
 
-        // Window-level so it also works from a collapsed note, where the editor can't take focus.
-        PreviewKeyDown += (_, e) =>
-        {
-            if (TryHandleUndoDeleteKey(e.Key, Keyboard.Modifiers)) e.Handled = true;
-        };
+        Loaded += (_, _) => UpdateFormattingToolbar();
+        IsVisibleChanged += (_, _) => UpdateFormattingToolbar();
         MouseLeave += NoteWindow_MouseLeave;
     }
 
-    /// <summary>Ctrl+Shift+Z brings back the most recently deleted note. Returns true if the key was used.</summary>
-    internal bool TryHandleUndoDeleteKey(Key key, ModifierKeys modifiers)
+    private Size MeasureFormattingToolbar(Orientation orientation)
     {
-        if (key != Key.Z || modifiers != (ModifierKeys.Control | ModifierKeys.Shift)) return false;
-        if (!_manager.CanUndoDelete) return false;
+        double width = 0;
+        double height = 0;
+        foreach (UIElement child in FormattingButtons.Children)
+        {
+            Size size;
+            if (child == FormattingSeparator)
+            {
+                var margin = FormattingSeparator.Margin;
+                size = new Size(margin.Left + margin.Right + (orientation == Orientation.Horizontal ? 1 : 0),
+                    margin.Top + margin.Bottom + (orientation == Orientation.Vertical ? 1 : 0));
+            }
+            else
+            {
+                child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                size = child.DesiredSize;
+            }
+            if (orientation == Orientation.Horizontal)
+            {
+                width += size.Width;
+                height = Math.Max(height, size.Height);
+            }
+            else
+            {
+                width = Math.Max(width, size.Width);
+                height += size.Height;
+            }
+        }
+        var panelMargin = FormattingButtons.Margin;
+        var border = Toolbar.BorderThickness;
+        var padding = Toolbar.Padding;
+        return new Size(width + panelMargin.Left + panelMargin.Right + border.Left + border.Right + padding.Left + padding.Right,
+            height + panelMargin.Top + panelMargin.Bottom + border.Top + border.Bottom + padding.Top + padding.Bottom);
+    }
 
-        _manager.UndoDelete();
-        return true;
+    private void UpdateFormattingToolbar()
+    {
+        if (!IsLoaded || !IsVisible || !IsActive || IsEffectivelyCollapsed || _hwnd == IntPtr.Zero)
+        {
+            FormattingPopup.IsOpen = false;
+            return;
+        }
+        if (!NativeMethods.GetWindowRect(_hwnd, out var rect)) return;
+
+        var horizontal = MeasureFormattingToolbar(Orientation.Horizontal);
+        var vertical = MeasureFormattingToolbar(Orientation.Vertical);
+        double horizontalScale = Math.Min(1, ActualWidth / horizontal.Width);
+        double verticalScale = Math.Min(1, ActualHeight / vertical.Height);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        var areas = System.Windows.Forms.Screen.AllScreens.Select(screen => PixelRect.From(screen.WorkingArea)).ToArray();
+        var placement = ScreenPlacement.PlaceToolbar(new PixelRect(rect.Left, rect.Top, rect.Right, rect.Bottom), areas,
+            (int)Math.Ceiling(horizontal.Width * horizontalScale * dpi.DpiScaleX), (int)Math.Ceiling(horizontal.Height * horizontalScale * dpi.DpiScaleY),
+            (int)Math.Ceiling(vertical.Width * verticalScale * dpi.DpiScaleX), (int)Math.Ceiling(vertical.Height * verticalScale * dpi.DpiScaleY),
+            (int)Math.Ceiling(4 * dpi.DpiScaleY));
+        var size = placement.Vertical ? vertical : horizontal;
+        double scale = placement.Vertical ? verticalScale : horizontalScale;
+        FormattingButtons.Orientation = placement.Vertical ? Orientation.Vertical : Orientation.Horizontal;
+        FormattingSeparator.Width = placement.Vertical ? double.NaN : 1;
+        FormattingSeparator.Height = placement.Vertical ? 1 : double.NaN;
+        Toolbar.LayoutTransform = new ScaleTransform(scale, scale);
+        Toolbar.Width = size.Width;
+        Toolbar.Height = size.Height;
+        FormattingPopup.Width = size.Width * scale;
+        FormattingPopup.Height = size.Height * scale;
+        var origin = OuterBorder.PointToScreen(new Point());
+        FormattingPopup.HorizontalOffset = (placement.Bounds.Left - origin.X) / dpi.DpiScaleX;
+        FormattingPopup.VerticalOffset = (placement.Bounds.Top - origin.Y) / dpi.DpiScaleY;
+        FormattingPopup.IsOpen = true;
+        if (PresentationSource.FromVisual(Toolbar) is HwndSource popupSource)
+            NativeMethods.SetWindowPos(popupSource.Handle, IntPtr.Zero, placement.Bounds.Left, placement.Bounds.Top, 0, 0,
+                NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER | NativeMethods.SWP_NOACTIVATE);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -138,24 +232,72 @@ public partial class NoteWindow : Window
         if (progman != IntPtr.Zero)
             NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT, progman);
 
+        HwndSource.FromHwnd(_hwnd)?.AddHook(WndProc);
+
         ApplyZOrder();
+    }
+
+    /// <summary>Activates this note without bringing the other notes forward with it.</summary>
+    public void ActivateNote()
+    {
+        _manager.BeginActivating(this);
+        Activate();
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (FormattingPopup.IsOpen && msg is NativeMethods.WM_DISPLAYCHANGE or NativeMethods.WM_SETTINGCHANGE or NativeMethods.WM_DPICHANGED)
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(UpdateFormattingToolbar));
+
+        if (msg == NativeMethods.WM_MOUSEACTIVATE)
+        {
+            _manager.BeginActivating(this);
+        }
+        else if (msg == NativeMethods.WM_WINDOWPOSCHANGING && lParam != IntPtr.Zero)
+        {
+            var pos = Marshal.PtrToStructure<NativeMethods.WINDOWPOS>(lParam);
+            if ((pos.flags & NativeMethods.SWP_NOZORDER) == 0 && ShouldHoldZOrder(pos.hwndInsertAfter))
+            {
+                pos.flags |= NativeMethods.SWP_NOZORDER;
+                Marshal.StructureToPtr(pos, lParam, false);
+            }
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// True when this note is only being moved up because a sibling note is activating. Notes share the desktop
+    /// window as owner, so Windows would otherwise raise all of them whenever one is clicked or created.
+    /// </summary>
+    internal bool ShouldHoldZOrder(IntPtr insertAfter)
+    {
+        var activating = _manager.ActivatingNote;
+        if (activating == null || activating == this || IsActive || _manager.Raised || Topmost) return false;
+        // Sending to the bottom or changing the topmost band is our own doing; only an upward pull is held back.
+        return insertAfter != NativeMethods.HWND_BOTTOM
+            && insertAfter != NativeMethods.HWND_TOPMOST
+            && insertAfter != NativeMethods.HWND_NOTOPMOST;
     }
 
     /// <summary>Notes sit on the desktop layer unless raised by the tray/hotkey, set to stay on top, or alerting.</summary>
     public void ApplyZOrder()
     {
-        bool top = _manager.Raised || Data.AlwaysOnTop || _isAlertFlashing || _alertKeepOnTop;
+        bool hoverPreview = _isHoverExpanded || _isHoverAnimating;
+        bool top = _manager.Raised || Data.AlwaysOnTop || _isAlertFlashing || _alertKeepOnTop || hoverPreview;
 
         // A note owned by the desktop is raised together with its siblings when clicked, so notes that
         // stay on top or alerting are left unowned to keep that from dragging the other notes forward.
         if (_hwnd != IntPtr.Zero)
         {
-            var owner = (Data.AlwaysOnTop || _isAlertFlashing || _alertKeepOnTop) ? IntPtr.Zero : NativeMethods.GetDesktopProgman();
+            var owner = (Data.AlwaysOnTop || _isAlertFlashing || _alertKeepOnTop || hoverPreview) ? IntPtr.Zero : NativeMethods.GetDesktopProgman();
             if (NativeMethods.GetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT) != owner)
                 NativeMethods.SetWindowLongPtr(_hwnd, NativeMethods.GWLP_HWNDPARENT, owner);
         }
         if (Topmost != top) Topmost = top;
-        if (!top) SendToBottom();
+        if (hoverPreview && _hwnd != IntPtr.Zero)
+            NativeMethods.SetWindowPos(_hwnd, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+        else if (!top) SendToBottom();
     }
 
     private void SendToBottom()
@@ -191,6 +333,9 @@ public partial class NoteWindow : Window
         if (!IsDeleted && !_manager.AllowClose) e.Cancel = true;
         base.OnClosing(e);
     }
+
+    /// <summary>The note's current content.</summary>
+    internal FlowDocument EditorDocument => Editor.Document;
 
     public void FocusEditor()
     {
@@ -252,6 +397,97 @@ public partial class NoteWindow : Window
 
     private void Delete_Click(object sender, RoutedEventArgs e) => _manager.DeleteNote(this);
 
+    private void HeaderColorMenu_Closed(object sender, RoutedEventArgs e)
+    {
+        HideHeaderActionsIfOutside();
+        CollapseIfCursorLeft();
+    }
+
+    private void MenuButton_MouseEnter(object sender, MouseEventArgs e) => SetHeaderActionsVisible(true);
+
+    private void MenuButton_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e) => SetHeaderActionsVisible(true);
+
+    private void HeaderActions_MouseLeave(object sender, MouseEventArgs e) => HideHeaderActionsIfOutside();
+
+    private void HeaderActions_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (!Header.IsKeyboardFocusWithin) HideHeaderActionsIfOutside();
+    }
+
+    private void HideHeaderActionsIfOutside()
+    {
+        if (!Header.IsMouseOver && !HeaderColorMenu.IsOpen)
+            SetHeaderActionsVisible(false);
+    }
+
+    private void HeaderTitleArea_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateHeaderActionsLayout();
+
+    private void UpdateHeaderActionsLayout()
+    {
+        var buttons = new[] { HeaderNewButton, HeaderPinButton, HeaderOnTopButton, HeaderColorButton, HeaderReminderButton, HeaderDeleteButton };
+        double scale = VisualTreeHelper.GetDpi(HeaderTitleArea).DpiScaleX;
+        double width = Math.Min(26, Math.Floor(HeaderTitleArea.ActualWidth * scale / buttons.Length) / scale);
+        foreach (var button in buttons)
+        {
+            button.Width = Math.Max(0, width);
+            button.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void SetHeaderActionsVisible(bool visible)
+    {
+        if (_headerActionsVisible == visible) return;
+        _headerActionsVisible = visible;
+        HeaderActions.Visibility = Visibility.Visible;
+        HeaderActions.IsHitTestVisible = visible;
+        UpdateHeaderActionsLayout();
+        if (!SystemParameters.ClientAreaAnimation)
+        {
+            CompleteHeaderActionsAnimation(visible);
+            return;
+        }
+
+        var duration = TimeSpan.FromMilliseconds(160);
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fade = new DoubleAnimation(HeaderActions.Opacity, visible ? 1 : 0, duration) { EasingFunction = easing };
+        fade.Completed += (_, _) =>
+        {
+            if (_headerActionsVisible == visible) CompleteHeaderActionsAnimation(visible);
+        };
+        HeaderActions.BeginAnimation(OpacityProperty, fade);
+        HeaderActionsSlide.BeginAnimation(TranslateTransform.XProperty,
+            new DoubleAnimation(HeaderActionsSlide.X, visible ? 0 : 16, duration) { EasingFunction = easing });
+        HeaderTitle.BeginAnimation(OpacityProperty,
+            new DoubleAnimation(HeaderTitle.Opacity, visible ? 0 : 1, duration) { EasingFunction = easing });
+    }
+
+    private void CompleteHeaderActionsAnimation(bool visible)
+    {
+        HeaderActions.Opacity = visible ? 1 : 0;
+        HeaderTitle.Opacity = visible ? 0 : 1;
+        HeaderActionsSlide.X = visible ? 0 : 16;
+        HeaderActions.BeginAnimation(OpacityProperty, null);
+        HeaderTitle.BeginAnimation(OpacityProperty, null);
+        HeaderActionsSlide.BeginAnimation(TranslateTransform.XProperty, null);
+        HeaderActions.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void HeaderColor_Click(object sender, RoutedEventArgs e)
+    {
+        HeaderColorMenu.PlacementTarget = HeaderColorButton;
+        HeaderColorMenu.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void UpdateHeaderTitle()
+    {
+        var text = new TextRange(Editor.Document.ContentStart, Editor.Document.ContentEnd).Text;
+        var title = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim()).FirstOrDefault(line => line.Length > 0) ?? string.Empty;
+        HeaderTitle.Text = title;
+        Title = title;
+    }
+
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
         ApplyPinned(!Data.Pinned);
@@ -267,16 +503,17 @@ public partial class NoteWindow : Window
     private void ApplyAlwaysOnTop(bool onTop)
     {
         Data.AlwaysOnTop = onTop;
-        OnTopButton.Tag = onTop ? "Active" : null;
-        OnTopButton.ToolTip = onTop ? "Stop keeping above other windows" : "Keep above all windows";
+        HeaderOnTopButton.Tag = onTop ? "Active" : null;
+        HeaderOnTopButton.ToolTip = onTop ? "Stop keeping above other windows" : "Keep above all windows";
         ApplyZOrder();
     }
 
     private void ApplyPinned(bool pinned)
     {
         Data.Pinned = pinned;
-        PinButton.Content = pinned ? "\uE841" : "\uE718";
-        PinButton.ToolTip = pinned ? "Unpin (allow moving and resizing)" : "Pin in place";
+        HeaderPinButton.Tag = pinned ? "Active" : null;
+        HeaderPinButton.Content = pinned ? "\uE841" : "\uE718";
+        HeaderPinButton.ToolTip = pinned ? "Unpin (allow moving and resizing)" : "Pin in place";
         Header.Cursor = pinned ? Cursors.Arrow : Cursors.SizeAll;
         ResizeMode = pinned ? ResizeMode.NoResize : ResizeMode.CanResize;
         WindowChrome.SetWindowChrome(this, new WindowChrome
@@ -289,33 +526,36 @@ public partial class NoteWindow : Window
         });
     }
 
-    private void Color_Click(object sender, RoutedEventArgs e)
+    private void PopulateColorMenu()
     {
-        var menu = new ContextMenu { PlacementTarget = ColorButton, Placement = PlacementMode.Bottom };
         foreach (var color in NoteColors.All)
         {
-            var item = new MenuItem
-            {
-                Header = color.Name,
-                IsChecked = color.Name == Data.Color,
-                Icon = new Border
-                {
-                    Width = 16,
-                    Height = 16,
-                    CornerRadius = new CornerRadius(3),
-                    Background = color.BodyBrush,
-                    BorderBrush = color.HeaderBrush,
-                    BorderThickness = new Thickness(2),
-                },
-            };
-            item.Click += (_, _) =>
-            {
-                ApplyColor(color);
-                _manager.RequestSave();
-            };
-            menu.Items.Add(item);
+            HeaderColorMenu.Items.Add(CreateColorMenuItem(color));
         }
-        menu.IsOpen = true;
+    }
+
+    private MenuItem CreateColorMenuItem(NoteColor color)
+    {
+        var item = new MenuItem
+        {
+            Header = color.Name,
+            IsChecked = color.Name == Data.Color,
+            Icon = new Border
+            {
+                Width = 16,
+                Height = 16,
+                CornerRadius = new CornerRadius(3),
+                Background = color.BodyBrush,
+                BorderBrush = color.HeaderBrush,
+                BorderThickness = new Thickness(2),
+            },
+        };
+        item.Click += (_, _) =>
+        {
+            ApplyColor(color);
+            _manager.RequestSave();
+        };
+        return item;
     }
 
     private void ApplyColor(NoteColor color)
@@ -323,6 +563,8 @@ public partial class NoteWindow : Window
         Data.Color = color.Name;
         Background = color.BodyBrush;
         Header.Background = color.HeaderBrush;
+        foreach (var item in HeaderColorMenu.Items.OfType<MenuItem>())
+            item.IsChecked = Equals(item.Header, color.Name);
     }
 
     // ---- Collapse & Reminders ----
@@ -337,7 +579,7 @@ public partial class NoteWindow : Window
 
     private void ApplyCollapsed(bool collapsed, bool saveSize)
     {
-        if (saveSize && !IsEffectivelyCollapsed)
+        if (saveSize && !IsEffectivelyCollapsed && !_isHoverAnimating)
         {
             _uncollapsedHeight = ActualHeight >= 120 ? ActualHeight : (Height >= 120 ? Height : NoteData.DefaultSize);
         }
@@ -350,6 +592,9 @@ public partial class NoteWindow : Window
     private void UpdateVisualCollapseState()
     {
         bool collapsed = IsEffectivelyCollapsed;
+        double expandedHeight = _uncollapsedHeight >= 140 ? _uncollapsedHeight : NoteData.DefaultSize;
+        _isHoverAnimating = false;
+        BeginAnimation(HeightProperty, null);
 
         CollapseButton.Content = Data.IsCollapsed ? "\uE70D" : "\uE70E";
         CollapseButton.ToolTip = Data.IsCollapsed ? "Expand note" : "Collapse note";
@@ -357,7 +602,7 @@ public partial class NoteWindow : Window
         if (collapsed)
         {
             Editor.Visibility = Visibility.Collapsed;
-            Toolbar.Visibility = Visibility.Collapsed;
+            FormattingPopup.IsOpen = false;
             MinHeight = CollapsedHeight;
             MaxHeight = CollapsedHeight;
             Height = CollapsedHeight;
@@ -366,22 +611,42 @@ public partial class NoteWindow : Window
         else
         {
             Editor.Visibility = Visibility.Visible;
-            if (IsActive) Toolbar.Visibility = Visibility.Visible;
             MinHeight = 140;
             MaxHeight = double.PositiveInfinity;
-            Height = _uncollapsedHeight >= 140 ? _uncollapsedHeight : NoteData.DefaultSize;
+            Height = expandedHeight;
             ResizeMode = Data.Pinned ? ResizeMode.NoResize : ResizeMode.CanResize;
         }
+        ApplyZOrder();
+        UpdateFormattingToolbar();
     }
 
     private void Header_MouseEnter(object sender, MouseEventArgs e)
     {
         if (Data.IsCollapsed && !_isHoverExpanded && !_isManagerExpanded)
         {
+            double fromHeight = ActualHeight;
             _isHoverExpanded = true;
             UpdateVisualCollapseState();
+            if (SystemParameters.ClientAreaAnimation)
+                AnimateHoverHeight(fromHeight, Height);
             _hoverTimer.Start();
         }
+    }
+
+    private void AnimateHoverHeight(double fromHeight, double toHeight)
+    {
+        MinHeight = CollapsedHeight;
+        MaxHeight = double.PositiveInfinity;
+        ResizeMode = ResizeMode.NoResize;
+        _isHoverAnimating = true;
+        Height = fromHeight;
+        var animation = new DoubleAnimation(fromHeight, toHeight, TimeSpan.FromMilliseconds(160))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop,
+        };
+        animation.Completed += (_, _) => UpdateVisualCollapseState();
+        BeginAnimation(HeightProperty, animation);
     }
 
     private bool IsCursorOutside()
@@ -392,17 +657,25 @@ public partial class NoteWindow : Window
 
     private void CollapseIfCursorLeft()
     {
+        if (HeaderColorMenu.IsOpen || (FormattingPopup.IsOpen && Toolbar.IsMouseOver)) return;
         if (!_isHoverExpanded) { _hoverTimer.Stop(); return; }
         if (!Data.IsCollapsed || _isManagerExpanded || IsCursorOutside())
         {
+            double fromHeight = ActualHeight;
             _hoverTimer.Stop();
             _isHoverExpanded = false;
-            UpdateVisualCollapseState();
+            if (Data.IsCollapsed && !_isManagerExpanded && SystemParameters.ClientAreaAnimation)
+                AnimateHoverHeight(fromHeight, CollapsedHeight);
+            else
+                UpdateVisualCollapseState();
         }
     }
 
     // MouseLeave isn't raised reliably (e.g. when leaving through the resize border), so the timer is the safety net.
-    private void NoteWindow_MouseLeave(object sender, MouseEventArgs e) => CollapseIfCursorLeft();
+    private void NoteWindow_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (!FormattingPopup.IsOpen) CollapseIfCursorLeft();
+    }
 
     public void OnManagerRaised()
     {
@@ -441,7 +714,8 @@ public partial class NoteWindow : Window
         bool hasActiveReminders = Data.Reminders.Any(r => r.IsRecurring || !r.HasFired);
         ReminderBellOutline.Visibility = hasActiveReminders ? Visibility.Collapsed : Visibility.Visible;
         ReminderBellFilled.Visibility = hasActiveReminders ? Visibility.Visible : Visibility.Collapsed;
-        ReminderButton.ToolTip = hasActiveReminders ? "Reminders set" : "Set reminders";
+        HeaderReminderButton.ToolTip = hasActiveReminders ? "Reminders set" : "Set reminders";
+        HeaderReminderButton.Tag = hasActiveReminders ? "Active" : null;
     }
 
     public void TriggerReminderAlert()
@@ -455,7 +729,7 @@ public partial class NoteWindow : Window
         // Bring this specific note to the front, then place the glow just behind it
         ApplyZOrder();
         StartAlertGlow();
-        Activate();
+        ActivateNote();
         Focus();
 
         // Play chime sound
@@ -497,7 +771,15 @@ public partial class NoteWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _imagePasteCancellation.Cancel();
+        _imagePasteCancellation.Dispose();
         _hoverTimer.Stop();
+        FormattingPopup.IsOpen = false;
+        _isHoverAnimating = false;
+        BeginAnimation(HeightProperty, null);
+        _headerActionsVisible = false;
+        CompleteHeaderActionsAnimation(false);
+        HeaderColorMenu.IsOpen = false;
         StopAlertGlow();
         base.OnClosed(e);
     }
@@ -506,7 +788,24 @@ public partial class NoteWindow : Window
 
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
+        UpdateHeaderTitle();
         _manager.RequestSave();
+        if (_imageOverlay is { IsResizing: false }) HideImageOverlay();
+        if (_relinking) return;
+        if (e.UndoAction is UndoAction.Undo or UndoAction.Redo)
+        {
+            // Changing the document now would add a new undo step, wiping the redo history and trapping Ctrl+Z
+            // (each undo would be redone straight away), so only refill images and reapply their sizes, which
+            // aren't undoable changes.
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () =>
+            {
+                ImageEditor.Hydrate(Editor, repairOnly: true);
+                ImageEditor.FitToWidth(Editor);
+            });
+            return;
+        }
+        _hydrateQueued = true;
+        QueueRelink();
 
         // Text added to a ticked item should look done like the rest of it. Applied after this change completes.
         var edited = Editor.Selection.End.Paragraph;
@@ -586,7 +885,11 @@ public partial class NoteWindow : Window
     {
         var modifiers = Keyboard.Modifiers;
 
-        if (e.Key == Key.T && modifiers == ModifierKeys.Control)
+        if (e.Key == Key.Tab && modifiers is ModifierKeys.None or ModifierKeys.Shift)
+        {
+            e.Handled = TextFormatting.ChangeListIndentation(Editor, outdent: modifiers == ModifierKeys.Shift);
+        }
+        else if (e.Key == Key.T && modifiers == ModifierKeys.Control)
         {
             ToggleStrikethrough();
             e.Handled = true;
@@ -624,6 +927,25 @@ public partial class NoteWindow : Window
 
     private void Editor_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        // Clicks on the image toolbar or resize grip belong to them.
+        if (_imageOverlay?.IsMouseOverControls == true) return;
+
+        if (Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control
+            && HandleImageClick(e.GetPosition(Editor), MouseButton.Left, e.ClickCount))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (Keyboard.Modifiers == ModifierKeys.Control
+            && LinkEditor.LinkAt(Editor, e.GetPosition(Editor)) is { } link
+            && LinkEditor.UriOf(link) is { } uri)
+        {
+            LinkEditor.Open(uri);
+            e.Handled = true;
+            return;
+        }
+
         var paragraph = ChecklistEditor.ParagraphAtCheckbox(Editor, e.GetPosition(Editor));
         if (paragraph == null) return;
 
@@ -632,11 +954,166 @@ public partial class NoteWindow : Window
         e.Handled = true;
     }
 
+    private void Editor_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        HandleImageClick(e.GetPosition(Editor), MouseButton.Right, e.ClickCount);
+    }
+
+    internal bool HandleImageClick(Point point, MouseButton button, int clickCount)
+    {
+        if (_imageOverlay?.IsMouseOverControls == true) return false;
+        var hit = ImageEditor.HitAt(Editor, point);
+        if (hit == null) return false;
+
+        Editor.Focus();
+        Editor.Selection.Select(hit.Link.ElementStart, hit.Link.ElementEnd);
+        if (button == MouseButton.Left && clickCount == 2) OpenImageViewer(hit.Name);
+        return true;
+    }
+
     private void Editor_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        bool overCheckbox = ChecklistEditor.ParagraphAtCheckbox(Editor, e.GetPosition(Editor)) != null;
-        if (overCheckbox) Editor.Cursor = Cursors.Hand;
+        var point = e.GetPosition(Editor);
+        UpdateImageOverlay(point);
+        if (_imageOverlay?.IsMouseOverControls == true)
+        {
+            Editor.ClearValue(CursorProperty);
+            return;
+        }
+        bool overCheckbox = ChecklistEditor.ParagraphAtCheckbox(Editor, point) != null;
+        bool overImage = _imageOverlay != null && ImageEditor.ImageAt(Editor, point) != null;
+        bool overLink = Keyboard.Modifiers == ModifierKeys.Control && LinkEditor.LinkAt(Editor, point) != null;
+        if (overCheckbox || overImage || overLink) Editor.Cursor = Cursors.Hand;
         else Editor.ClearValue(CursorProperty);
+    }
+
+    // ---- Images ----
+
+    private ImageOverlay? _imageOverlay;
+
+    internal ImageOverlay? ImageOverlay => _imageOverlay;
+
+    /// <summary>Shows the outline, toolbar and resize grip on the image under the mouse, and hides them once it leaves.</summary>
+    internal void UpdateImageOverlay(Point point)
+    {
+        if (_imageOverlay is { } current && (current.IsMouseOverControls || current.IsResizing)) return;
+
+        var hit = ImageEditor.HitAt(Editor, point);
+        if (hit != null && _imageOverlay != null && _imageOverlay.AdornedElement == hit.Content && _imageOverlay.Link == hit.Link)
+            return;
+
+        HideImageOverlay();
+        if (hit == null || AdornerLayer.GetAdornerLayer(hit.Content) is not { } layer) return;
+
+        var overlay = new ImageOverlay(hit.Content, hit.Link, hit.Name)
+        {
+            MaxImageWidth = hit.Content.MaxWidth,
+        };
+        overlay.PreviewRequested += () => OpenImageViewer(overlay.ImageName);
+        overlay.CopyRequested += () => ImageStore.CopyToClipboard(overlay.ImageName);
+        overlay.DeleteRequested += () =>
+        {
+            HideImageOverlay();
+            ImageEditor.Remove(Editor, overlay.Link);
+            Editor.Focus();
+        };
+        overlay.Resizing += width => ((FrameworkElement)overlay.AdornedElement).Width = width;
+        overlay.Resized += width => CommitImageWidth(overlay, width);
+        layer.Add(overlay);
+        _imageOverlay = overlay;
+    }
+
+    internal void HideImageOverlay()
+    {
+        if (_imageOverlay == null) return;
+        var overlay = _imageOverlay;
+        _imageOverlay = null;
+        AdornerLayer.GetAdornerLayer(overlay.AdornedElement)?.Remove(overlay);
+    }
+
+    /// <summary>Saves the chosen width, retaining auto-fit for images naturally wider than the note.</summary>
+    private void CommitImageWidth(ImageOverlay overlay, double width)
+    {
+        double natural = ImageEditor.BitmapOf((FrameworkElement)overlay.AdornedElement)?.Width ?? double.PositiveInfinity;
+        double? chosen = width >= overlay.MaxImageWidth - 1 && natural >= overlay.MaxImageWidth - 1 ? null : width;
+        ImageEditor.SetWidth(Editor, overlay.Link, chosen);
+        ImageEditor.FitToWidth(Editor);
+    }
+
+    internal void OpenImageViewer(string name)
+    {
+        HideImageOverlay();
+        ImageViewerWindow.Open(name, this);
+    }
+
+    internal Rect? ImageBoundsOnScreen(string name) => ImageEditor.ScreenBoundsOf(Editor, name);
+
+    private bool _relinking;
+    private bool _relinkQueued;
+    private bool _relinkIncludeCaret;
+    private bool _hydrateQueued;
+
+    /// <summary>Updates the note's links and images once the current edit has finished.</summary>
+    private void QueueRelink()
+    {
+        if (_relinkQueued) return;
+        _relinkQueued = true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, () => RelinkNow(_relinkIncludeCaret));
+    }
+
+    internal void RelinkNow(bool includeCaret)
+    {
+        _relinkQueued = false;
+        _relinkIncludeCaret = false;
+        bool hydrate = _hydrateQueued;
+        _hydrateQueued = false;
+        if (_relinking) return;
+        _relinking = true;
+        try
+        {
+            if (hydrate) ImageEditor.Hydrate(Editor);
+            LinkEditor.Relink(Editor, includeCaret);
+        }
+        finally
+        {
+            _relinking = false;
+        }
+    }
+
+    /// <summary>Puts images at the caret (replacing any selection) as one undoable change.</summary>
+    internal void InsertImages(IEnumerable<string> names)
+    {
+        Editor.BeginChange();
+        try
+        {
+            foreach (var name in names) ImageEditor.Insert(Editor, name);
+        }
+        finally
+        {
+            Editor.EndChange();
+        }
+        Editor.Focus();
+    }
+
+    private void Editor_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        if (ImageEditor.ImageFilesIn(e.Data).Count == 0) return;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    private void Editor_PreviewDrop(object sender, DragEventArgs e)
+    {
+        var files = ImageEditor.ImageFilesIn(e.Data);
+        if (files.Count == 0) return;
+        e.Handled = true;
+
+        var names = files.Select(ImageStore.Import).OfType<string>().ToList();
+        if (names.Count == 0) return;
+        var position = Editor.GetPositionFromPoint(e.GetPosition(Editor), snapToText: true);
+        if (position != null) Editor.Selection.Select(position, position);
+        Activate();
+        InsertImages(names);
     }
 
     /// <summary>Typing "[] " turns the line into a checklist item, or adds a checkbox to a bullet or numbered item.</summary>
@@ -768,21 +1245,107 @@ public partial class NoteWindow : Window
 
     private static void SetActive(Button button, bool active) => button.Tag = active ? "Active" : null;
 
-    private static void OnPaste(object sender, DataObjectPastingEventArgs e)
+    private void OnPaste(object sender, DataObjectPastingEventArgs e)
     {
-        // Keep rich content copied between notes; paste anything else as plain text so the note stays tidy.
-        if (e.DataObject.GetDataPresent(DataFormats.Xaml) || e.DataObject.GetDataPresent(DataFormats.XamlPackage))
-            return;
+        var data = e.DataObject;
 
-        if (e.DataObject.GetData(DataFormats.UnicodeText) is string text)
+        // Content copied from a note. If it has images, paste it ourselves so they come back in the same undo step.
+        if (data.GetDataPresent(DataFormats.Xaml) || data.GetDataPresent(DataFormats.XamlPackage))
+        {
+            if (!e.IsDragDrop && data.GetData(DataFormats.Xaml) is string xaml && ImageEditor.UriPattern.IsMatch(xaml))
+            {
+                e.CancelCommand();
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, () => PasteNoteContent(xaml));
+            }
+            else if (data.GetDataPresent(DataFormats.Xaml))
+            {
+                // WPF's own image format would bring in a copy of the picture rather than the note's file.
+                e.FormatToApply = DataFormats.Xaml;
+            }
+            return;
+        }
+
+        var files = ImageEditor.ImageFilesIn(data);
+        if (files.Count > 0)
+        {
+            e.CancelCommand();
+            var names = files.Select(ImageStore.Import).OfType<string>().ToList();
+            if (names.Count > 0) Dispatcher.BeginInvoke(DispatcherPriority.Input, () => InsertImages(names));
+            return;
+        }
+
+        if (ImageEditor.GifSourceFrom(data) is { } gifSource)
+        {
+            e.CancelCommand();
+            _ = PasteGifAsync(gifSource, ImageEditor.ImageFrom(data));
+            return;
+        }
+
+        // Paste anything else as plain text so the note stays tidy.
+        if (data.GetData(DataFormats.UnicodeText) is string text)
         {
             var plain = new DataObject();
             plain.SetData(DataFormats.UnicodeText, text);
             e.DataObject = plain;
+            return;
         }
-        else
+
+        e.CancelCommand();
+        if (ImageEditor.ImageFrom(data) is { } bitmap)
         {
-            e.CancelCommand();
+            string name;
+            try
+            {
+                name = ImageStore.Save(bitmap);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                return;
+            }
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => InsertImages(new[] { name }));
+        }
+    }
+
+    internal async Task PasteGifAsync(Uri source, BitmapSource? fallback, HttpClient? client = null)
+    {
+        var document = Editor.Document;
+        var target = new TextRange(Editor.Selection.Start, Editor.Selection.End);
+        var name = await ImageStore.DownloadGifAsync(source, client, _imagePasteCancellation.Token);
+        if (!IsLoaded || IsDeleted || Editor.Document != document) return;
+        if (name == null && fallback != null)
+        {
+            try { name = ImageStore.Save(fallback); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { }
+        }
+        if (name == null) return;
+
+        var currentStart = Editor.Selection.Start;
+        var currentEnd = Editor.Selection.End;
+        bool moved = currentStart.CompareTo(target.Start) != 0 || currentEnd.CompareTo(target.End) != 0;
+        Editor.Selection.Select(target.Start, target.End);
+        InsertImages(new[] { name });
+        if (moved) Editor.Selection.Select(currentStart, currentEnd);
+    }
+
+    private void PasteNoteContent(string xaml)
+    {
+        Editor.BeginChange();
+        try
+        {
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(xaml));
+            Editor.Selection.Load(stream, DataFormats.Xaml);
+            ImageEditor.Hydrate(Editor);
+            ChecklistEditor.RefreshGlyphs(Editor.Document);
+            Editor.Selection.Select(Editor.Selection.End, Editor.Selection.End);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.Xml.XmlException
+                                       or System.Windows.Markup.XamlParseException)
+        {
+            // Unreadable clipboard content; leave the note as it was.
+        }
+        finally
+        {
+            Editor.EndChange();
         }
     }
 }

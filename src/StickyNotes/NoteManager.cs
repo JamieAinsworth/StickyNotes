@@ -113,6 +113,21 @@ public sealed class NoteManager
     private bool _stickyRaise;
 
     /// <summary>
+    /// The note being activated right now (clicked, created or focused by the app). Notes are owned by the desktop
+    /// window, and Windows raises a whole owned group when one member activates; the other notes use this to stay put.
+    /// </summary>
+    internal NoteWindow? ActivatingNote { get; private set; }
+
+    internal void BeginActivating(NoteWindow window)
+    {
+        ActivatingNote = window;
+        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, () =>
+        {
+            if (ActivatingNote == window) ActivatingNote = null;
+        });
+    }
+
+    /// <summary>
     /// Brings every note in front of other windows. A temporary raise (tray double-click) drops back to the
     /// desktop once focus leaves the notes; a sticky one (hotkey) stays until toggled off.
     /// </summary>
@@ -172,7 +187,27 @@ public sealed class NoteManager
             EnsureOnScreen(note);
             ShowNote(note);
         }
+        DeleteUnusedImages();
         return notes.Count;
+    }
+
+    /// <summary>
+    /// Deletes image files no open or recently deleted note uses (see <see cref="ImageStore.DeleteUnused"/>).
+    /// Images removed from a note while the app runs could still come back with Ctrl+Z, so this only runs at
+    /// start-up and exit.
+    /// </summary>
+    private void DeleteUnusedImages()
+    {
+        try
+        {
+            var inUse = _windows.SelectMany(w => ImageEditor.NamesIn(w.EditorDocument))
+                .Concat(_pendingRecreate.Concat(_deletedNotes.Select(d => d.Data)).SelectMany(d => ImageStore.NamesIn(d.Content)));
+            ImageStore.DeleteUnused(AppSettings.Current.ResolvedDataFolder, inUse);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("Failed to clean up images: " + ex);
+        }
     }
 
     public NoteWindow CreateNote(NoteWindow? from = null)
@@ -197,7 +232,7 @@ public sealed class NoteManager
 
         EnsureOnScreen(data);
         var window = ShowNote(data);
-        window.Activate();
+        window.ActivateNote();
         window.FocusEditor();
         RequestSave();
         return window;
@@ -208,6 +243,8 @@ public sealed class NoteManager
         var window = new NoteWindow(this, data);
         window.Closed += OnWindowClosed;
         _windows.Add(window);
+        // Showing a note activates it, which would otherwise pull every other note up with it.
+        BeginActivating(window);
         window.Show();
         return window;
     }
@@ -225,13 +262,15 @@ public sealed class NoteManager
         _deletedNotes.Add((data, DateTime.Now));
         if (_deletedNotes.Count > MaxUndoableDeletes) _deletedNotes.RemoveAt(0);
 
-        bool wasActive = window.IsActive;
+        // Closing the active note makes Windows activate another window, often a sibling note, which would come
+        // forward over other apps. Handing focus back to the app that was in use first keeps every note where it is.
+        if (window.IsActive && !Raised)
+        {
+            var previous = NativeMethods.TopOtherAppWindow();
+            if (previous != IntPtr.Zero) NativeMethods.SetForegroundWindow(previous);
+        }
         window.IsDeleted = true;
         window.Close();
-
-        // The deleted note held the keyboard focus; hand it to another note so the undo shortcut works straight away.
-        if (wasActive)
-            (_windows.FirstOrDefault(w => !w.IsEffectivelyCollapsed) ?? _windows.FirstOrDefault())?.Activate();
     }
 
     /// <summary>Brings back the most recently deleted note, where it was, with its content and reminders.</summary>
@@ -254,7 +293,7 @@ public sealed class NoteManager
 
         EnsureOnScreen(data);
         var window = ShowNote(data);
-        window.Activate();
+        window.ActivateNote();
         window.FocusEditor();
         RequestSave();
         return window;
@@ -340,6 +379,9 @@ public sealed class NoteManager
         _reminderTimer.Stop();
         _displayTimer.Stop();
         SaveNow();
+        // Deleted notes can't be restored after exit, so their images are no longer needed.
+        _deletedNotes.Clear();
+        DeleteUnusedImages();
         _shuttingDown = true;
         CloseAllWindows();
     }
